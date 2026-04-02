@@ -27,6 +27,12 @@ const parseJson = async <T>(response: Response): Promise<T> => {
   return data;
 };
 
+export const fetchWorkspaceRoot = async (): Promise<string> => {
+  const response = await api.get('/workspace-root');
+  const data = await parseJson<{ path: string }>(response);
+  return data.path || '~';
+};
+
 export const fetchGithubTokenCredentials = async () => {
   const response = await api.get('/settings/credentials?type=github_token');
   const data = await parseJson<CredentialsResponse>(response);

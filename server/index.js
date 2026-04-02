@@ -79,13 +79,21 @@ import { getConnectableHost } from '../shared/networkHosts.js';
 const VALID_PROVIDERS = ['claude', 'codex', 'cursor', 'gemini'];
 
 // File system watchers for provider project/session folders
-const PROVIDER_WATCH_PATHS = [
-    { provider: 'claude', rootPath: path.join(os.homedir(), '.claude', 'projects') },
-    { provider: 'cursor', rootPath: path.join(os.homedir(), '.cursor', 'chats') },
-    { provider: 'codex', rootPath: path.join(os.homedir(), '.codex', 'sessions') },
-    { provider: 'gemini', rootPath: path.join(os.homedir(), '.gemini', 'projects') },
-    { provider: 'gemini_sessions', rootPath: path.join(os.homedir(), '.gemini', 'sessions') }
-];
+// Watch user data directories for multi-user mode, fall back to system home for single-user
+const USERS_BASE_DIR = userEnvManager.getBaseDir();
+const watchBase = fs.existsSync(USERS_BASE_DIR) ? USERS_BASE_DIR : os.homedir();
+const PROVIDER_WATCH_PATHS = watchBase === os.homedir()
+    ? [
+        { provider: 'claude', rootPath: path.join(watchBase, '.claude', 'projects') },
+        { provider: 'cursor', rootPath: path.join(watchBase, '.cursor', 'chats') },
+        { provider: 'codex', rootPath: path.join(watchBase, '.codex', 'sessions') },
+        { provider: 'gemini', rootPath: path.join(watchBase, '.gemini', 'projects') },
+        { provider: 'gemini_sessions', rootPath: path.join(watchBase, '.gemini', 'sessions') }
+    ]
+    : [
+        // Multi-user: watch the entire users base dir for all providers
+        { provider: 'claude', rootPath: USERS_BASE_DIR },
+    ];
 const WATCHER_IGNORED_PATTERNS = [
     '**/node_modules/**',
     '**/.git/**',
@@ -140,24 +148,14 @@ async function setupProjectsWatcher() {
         }
 
         projectsWatcherDebounceTimer = setTimeout(async () => {
-            // Prevent reentrant calls
-            if (isGetProjectsRunning) {
-                return;
-            }
-
             try {
-                isGetProjectsRunning = true;
-
                 // Clear project directory cache when files change
                 clearProjectDirectoryCache();
 
-                // Get updated projects list
-                const updatedProjects = await getProjects(broadcastProgress);
-
-                // Notify all connected clients about the project changes
+                // Notify all connected clients to refresh their own projects
+                // (each client will fetch their user-specific projects via GET /api/projects)
                 const updateMessage = JSON.stringify({
-                    type: 'projects_updated',
-                    projects: updatedProjects,
+                    type: 'projects_changed',
                     timestamp: new Date().toISOString(),
                     changeType: eventType,
                     changedFile: path.relative(rootPath, filePath),
@@ -172,8 +170,6 @@ async function setupProjectsWatcher() {
 
             } catch (error) {
                 console.error('[ERROR] Error handling project changes:', error);
-            } finally {
-                isGetProjectsRunning = false;
             }
         }, WATCHER_DEBOUNCE_MS);
     };
@@ -497,6 +493,16 @@ app.post('/api/system/update', authenticateToken, async (req, res) => {
     }
 });
 
+// Return user's workspace root path (for frontend default path)
+app.get('/api/workspace-root', authenticateToken, async (req, res) => {
+    const userProjectsRoot = req.user?.id ? userEnvManager.getUserProjectsDir(req.user.id) : null;
+    // Ensure user's projects directory exists
+    if (userProjectsRoot) {
+        await fs.promises.mkdir(userProjectsRoot, { recursive: true });
+    }
+    res.json({ path: userProjectsRoot || WORKSPACES_ROOT });
+});
+
 app.get('/api/projects', authenticateToken, async (req, res) => {
     try {
         const projects = await getProjects(broadcastProgress, {
@@ -512,7 +518,7 @@ app.get('/api/projects', authenticateToken, async (req, res) => {
 app.get('/api/projects/:projectName/sessions', authenticateToken, async (req, res) => {
     try {
         const { limit = 5, offset = 0 } = req.query;
-        const result = await getSessions(req.params.projectName, parseInt(limit), parseInt(offset));
+        const result = await getSessions(req.params.projectName, parseInt(limit), parseInt(offset), req.user?.data_dir || null);
         applyCustomSessionNames(result.sessions, 'claude', req.user.id);
         res.json(result);
     } catch (error) {
@@ -524,7 +530,7 @@ app.get('/api/projects/:projectName/sessions', authenticateToken, async (req, re
 app.put('/api/projects/:projectName/rename', authenticateToken, async (req, res) => {
     try {
         const { displayName } = req.body;
-        await renameProject(req.params.projectName, displayName);
+        await renameProject(req.params.projectName, displayName, req.user?.data_dir || null);
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -536,7 +542,7 @@ app.delete('/api/projects/:projectName/sessions/:sessionId', authenticateToken, 
     try {
         const { projectName, sessionId } = req.params;
         console.log(`[API] Deleting session: ${sessionId} from project: ${projectName}`);
-        await deleteSession(projectName, sessionId);
+        await deleteSession(projectName, sessionId, req.user?.data_dir || null);
         sessionNamesDb.deleteName(sessionId, 'claude', req.user.id);
         console.log(`[API] Session ${sessionId} deleted successfully`);
         res.json({ success: true });
@@ -577,7 +583,7 @@ app.delete('/api/projects/:projectName', authenticateToken, async (req, res) => 
     try {
         const { projectName } = req.params;
         const force = req.query.force === 'true';
-        await deleteProject(projectName, force);
+        await deleteProject(projectName, force, req.user?.data_dir || null);
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -593,7 +599,16 @@ app.post('/api/projects/create', authenticateToken, async (req, res) => {
             return res.status(400).json({ error: 'Project path is required' });
         }
 
-        const project = await addProjectManually(projectPath.trim());
+        // Validate path is within user's projects directory
+        const userProjectsRoot = req.user?.id ? userEnvManager.getUserProjectsDir(req.user.id) : null;
+        if (userProjectsRoot) {
+            const validation = await validateWorkspacePath(projectPath.trim(), userProjectsRoot);
+            if (!validation.valid) {
+                return res.status(400).json({ error: validation.error });
+            }
+        }
+
+        const project = await addProjectManually(projectPath.trim(), null, req.user?.data_dir || null);
         res.json({ success: true, project });
     } catch (error) {
         console.error('Error creating project:', error);
@@ -630,7 +645,7 @@ app.get('/api/search/conversations', authenticateToken, async (req, res) => {
             } else {
                 res.write(`event: progress\ndata: ${JSON.stringify({ totalMatches, scannedProjects, totalProjects })}\n\n`);
             }
-        }, abortController.signal);
+        }, abortController.signal, req.user?.data_dir || null);
         if (!closed) {
             res.write(`event: done\ndata: {}\n\n`);
         }
@@ -646,13 +661,14 @@ app.get('/api/search/conversations', authenticateToken, async (req, res) => {
     }
 });
 
-const expandWorkspacePath = (inputPath) => {
+const expandWorkspacePath = (inputPath, userRoot = null) => {
+    const root = userRoot || WORKSPACES_ROOT;
     if (!inputPath) return inputPath;
     if (inputPath === '~') {
-        return WORKSPACES_ROOT;
+        return root;
     }
     if (inputPath.startsWith('~/') || inputPath.startsWith('~\\')) {
-        return path.join(WORKSPACES_ROOT, inputPath.slice(2));
+        return path.join(root, inputPath.slice(2));
     }
     return inputPath;
 };
@@ -662,17 +678,22 @@ app.get('/api/browse-filesystem', authenticateToken, async (req, res) => {
     try {
         const { path: dirPath } = req.query;
 
-        console.log('[API] Browse filesystem request for path:', dirPath);
-        console.log('[API] WORKSPACES_ROOT is:', WORKSPACES_ROOT);
-        // Default to home directory if no path provided
-        const defaultRoot = WORKSPACES_ROOT;
-        let targetPath = dirPath ? expandWorkspacePath(dirPath) : defaultRoot;
+        // Use user-specific projects directory as root if available
+        const userProjectsRoot = req.user?.id ? userEnvManager.getUserProjectsDir(req.user.id) : null;
+        const defaultRoot = userProjectsRoot || WORKSPACES_ROOT;
+
+        // Ensure user's projects directory exists (for users created before this feature)
+        if (userProjectsRoot) {
+            await fs.promises.mkdir(userProjectsRoot, { recursive: true });
+        }
+
+        let targetPath = dirPath ? expandWorkspacePath(dirPath, defaultRoot) : defaultRoot;
 
         // Resolve and normalize the path
         targetPath = path.resolve(targetPath);
 
         // Security check - ensure path is within allowed workspace root
-        const validation = await validateWorkspacePath(targetPath);
+        const validation = await validateWorkspacePath(targetPath, userProjectsRoot);
         if (!validation.valid) {
             return res.status(403).json({ error: validation.error });
         }
@@ -744,9 +765,10 @@ app.post('/api/create-folder', authenticateToken, async (req, res) => {
         if (!folderPath) {
             return res.status(400).json({ error: 'Path is required' });
         }
-        const expandedPath = expandWorkspacePath(folderPath);
+        const userProjectsRoot = req.user?.id ? userEnvManager.getUserProjectsDir(req.user.id) : null;
+        const expandedPath = expandWorkspacePath(folderPath, userProjectsRoot || undefined);
         const resolvedInput = path.resolve(expandedPath);
-        const validation = await validateWorkspacePath(resolvedInput);
+        const validation = await validateWorkspacePath(resolvedInput, userProjectsRoot);
         if (!validation.valid) {
             return res.status(403).json({ error: validation.error });
         }
@@ -1499,6 +1521,10 @@ function handleChatConnection(ws, request) {
                 console.log('📁 Project:', data.options?.projectPath || 'Unknown');
                 console.log('🔄 Session:', data.options?.sessionId ? 'Resume' : 'New');
 
+                // Inject user data directory for multi-user isolation
+                if (request?.user?.data_dir) {
+                    data.options = { ...data.options, userDataDir: request.user.data_dir };
+                }
                 // Use Claude Agents SDK
                 await queryClaudeSDK(data.command, data.options, writer);
             } else if (data.type === 'cursor-command') {

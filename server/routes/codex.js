@@ -59,7 +59,7 @@ router.get('/sessions', async (req, res) => {
       return res.status(400).json({ success: false, error: 'projectPath query parameter required' });
     }
 
-    const sessions = await getCodexSessions(projectPath);
+    const sessions = await getCodexSessions(projectPath, { homeDir: req.user?.data_dir || null });
     applyCustomSessionNames(sessions, 'codex', req.user?.id);
     res.json({ success: true, sessions });
   } catch (error) {
@@ -71,7 +71,7 @@ router.get('/sessions', async (req, res) => {
 router.delete('/sessions/:sessionId', async (req, res) => {
   try {
     const { sessionId } = req.params;
-    await deleteCodexSession(sessionId);
+    await deleteCodexSession(sessionId, req.user?.data_dir || null);
     sessionNamesDb.deleteName(sessionId, 'codex', req.user?.id);
     res.json({ success: true });
   } catch (error) {

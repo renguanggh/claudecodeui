@@ -49,6 +49,7 @@ router.get('/:sessionId/messages', async (req, res) => {
       projectPath,
       limit,
       offset,
+      homeDir: req.user?.data_dir || null,
     });
 
     return res.json(result);

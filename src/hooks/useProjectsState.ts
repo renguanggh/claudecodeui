@@ -226,71 +226,93 @@ export function useProjectsState({
       return;
     }
 
-    if (latestMessage.type !== 'projects_updated') {
-      return;
-    }
+    if (latestMessage.type === 'projects_updated' && (latestMessage as ProjectsUpdatedMessage).projects) {
+      // Legacy: handle inline project data from watcher
+      const projectsMessage = latestMessage as ProjectsUpdatedMessage;
 
-    const projectsMessage = latestMessage as ProjectsUpdatedMessage;
+      if (projectsMessage.changedFile && selectedSession && selectedProject) {
+        const normalized = projectsMessage.changedFile.replace(/\\/g, '/');
+        const changedFileParts = normalized.split('/');
 
-    if (projectsMessage.changedFile && selectedSession && selectedProject) {
-      const normalized = projectsMessage.changedFile.replace(/\\/g, '/');
-      const changedFileParts = normalized.split('/');
+        if (changedFileParts.length >= 2) {
+          const filename = changedFileParts[changedFileParts.length - 1];
+          const changedSessionId = filename.replace('.jsonl', '');
 
-      if (changedFileParts.length >= 2) {
-        const filename = changedFileParts[changedFileParts.length - 1];
-        const changedSessionId = filename.replace('.jsonl', '');
+          if (changedSessionId === selectedSession.id) {
+            const isSessionActive = activeSessions.has(selectedSession.id);
 
-        if (changedSessionId === selectedSession.id) {
-          const isSessionActive = activeSessions.has(selectedSession.id);
-
-          if (!isSessionActive) {
-            setExternalMessageUpdate((prev) => prev + 1);
+            if (!isSessionActive) {
+              setExternalMessageUpdate((prev) => prev + 1);
+            }
           }
         }
       }
-    }
 
-    const hasActiveSession =
-      (selectedSession && activeSessions.has(selectedSession.id)) ||
-      (activeSessions.size > 0 && Array.from(activeSessions).some((id) => id.startsWith('new-session-')));
+      const hasActiveSession =
+        (selectedSession && activeSessions.has(selectedSession.id)) ||
+        (activeSessions.size > 0 && Array.from(activeSessions).some((id) => id.startsWith('new-session-')));
 
-    const updatedProjects = projectsMessage.projects;
+      const updatedProjects = projectsMessage.projects;
 
-    if (
-      hasActiveSession &&
-      !isUpdateAdditive(projects, updatedProjects, selectedProject, selectedSession)
-    ) {
+      if (
+        hasActiveSession &&
+        !isUpdateAdditive(projects, updatedProjects, selectedProject, selectedSession)
+      ) {
+        return;
+      }
+
+      setProjects(updatedProjects);
+
+      if (!selectedProject) {
+        return;
+      }
+
+      const updatedSelectedProject = updatedProjects.find(
+        (project) => project.name === selectedProject.name,
+      );
+
+      if (!updatedSelectedProject) {
+        return;
+      }
+
+      if (serialize(updatedSelectedProject) !== serialize(selectedProject)) {
+        setSelectedProject(updatedSelectedProject);
+      }
+
+      if (!selectedSession) {
+        return;
+      }
+
+      const updatedSelectedSession = getProjectSessions(updatedSelectedProject).find(
+        (session) => session.id === selectedSession.id,
+      );
+
+      if (!updatedSelectedSession) {
+        setSelectedSession(null);
+      }
+    } else if (latestMessage.type === 'projects_changed' || latestMessage.type === 'projects_updated') {
+      // Watcher notifies that files changed — re-fetch user-specific projects from the API
+      const msg = latestMessage as { changedFile?: string };
+      if (msg.changedFile && selectedSession && selectedProject) {
+        const normalized = msg.changedFile.replace(/\\/g, '/');
+        const changedFileParts = normalized.split('/');
+
+        if (changedFileParts.length >= 2) {
+          const filename = changedFileParts[changedFileParts.length - 1];
+          const changedSessionId = filename.replace('.jsonl', '');
+
+          if (changedSessionId === selectedSession.id) {
+            const isSessionActive = activeSessions.has(selectedSession.id);
+            if (!isSessionActive) {
+              setExternalMessageUpdate((prev) => prev + 1);
+            }
+          }
+        }
+      }
+
+      fetchProjects({ showLoadingState: false });
+    } else {
       return;
-    }
-
-    setProjects(updatedProjects);
-
-    if (!selectedProject) {
-      return;
-    }
-
-    const updatedSelectedProject = updatedProjects.find(
-      (project) => project.name === selectedProject.name,
-    );
-
-    if (!updatedSelectedProject) {
-      return;
-    }
-
-    if (serialize(updatedSelectedProject) !== serialize(selectedProject)) {
-      setSelectedProject(updatedSelectedProject);
-    }
-
-    if (!selectedSession) {
-      return;
-    }
-
-    const updatedSelectedSession = getProjectSessions(updatedSelectedProject).find(
-      (session) => session.id === selectedSession.id,
-    );
-
-    if (!updatedSelectedSession) {
-      setSelectedSession(null);
     }
   }, [latestMessage, selectedProject, selectedSession, activeSessions, projects]);
 

@@ -83,13 +83,14 @@ export const geminiAdapter = {
    * First tries in-memory session manager, then falls back to CLI sessions on disk.
    */
   async fetchHistory(sessionId, opts = {}) {
+    const { homeDir = null } = opts;
     let rawMessages;
     try {
       rawMessages = sessionManager.getSessionMessages(sessionId);
 
       // Fallback to Gemini CLI sessions on disk
       if (rawMessages.length === 0) {
-        rawMessages = await getGeminiCliSessionMessages(sessionId);
+        rawMessages = await getGeminiCliSessionMessages(sessionId, homeDir);
       }
     } catch (error) {
       console.warn(`[GeminiAdapter] Failed to load session ${sessionId}:`, error.message);

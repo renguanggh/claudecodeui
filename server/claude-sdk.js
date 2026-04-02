@@ -406,9 +406,9 @@ async function cleanupTempFiles(tempImagePaths, tempDir) {
  * @param {string} cwd - Current working directory for project-specific configs
  * @returns {Object|null} MCP servers object or null if none found
  */
-async function loadMcpConfig(cwd) {
+async function loadMcpConfig(cwd, homeDir = null) {
   try {
-    const claudeConfigPath = path.join(os.homedir(), '.claude.json');
+    const claudeConfigPath = path.join(homeDir || os.homedir(), '.claude.json');
 
     // Check if config file exists
     try {
@@ -484,8 +484,19 @@ async function queryClaudeSDK(command, options = {}, ws) {
     // Map CLI options to SDK format
     const sdkOptions = mapCliOptionsToSDK(options);
 
+    // Set user-specific environment via SDK env option (multi-user isolation)
+    // IMPORTANT: Do NOT modify process.env directly — that causes race conditions
+    // between concurrent users. The SDK accepts an `env` option instead.
+    if (options.userDataDir) {
+      sdkOptions.env = {
+        ...process.env,
+        CLAUDE_CONFIG_DIR: path.join(options.userDataDir, '.claude'),
+        HOME: options.userDataDir,
+      };
+    }
+
     // Load MCP configuration
-    const mcpServers = await loadMcpConfig(options.cwd);
+    const mcpServers = await loadMcpConfig(options.cwd, options.userDataDir || null);
     if (mcpServers) {
       sdkOptions.mcpServers = mcpServers;
     }

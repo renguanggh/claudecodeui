@@ -4,8 +4,20 @@ import path from 'path';
 import { spawn } from 'child_process';
 import os from 'os';
 import { addProjectManually } from '../projects.js';
+import userEnvManager from '../services/user-env-manager.js';
 
 const router = express.Router();
+
+/**
+ * Get the user's projects root directory.
+ * Returns user-specific projects dir if user has data_dir, otherwise null.
+ */
+function getUserProjectsRoot(req) {
+  if (req.user?.id) {
+    return userEnvManager.getUserProjectsDir(req.user.id);
+  }
+  return null;
+}
 
 function sanitizeGitError(message, token) {
   if (!message || !token) return message;
@@ -48,7 +60,7 @@ export const FORBIDDEN_PATHS = [
  * @param {string} requestedPath - The path to validate
  * @returns {Promise<{valid: boolean, resolvedPath?: string, error?: string}>}
  */
-export async function validateWorkspacePath(requestedPath) {
+export async function validateWorkspacePath(requestedPath, userWorkspaceRoot = null) {
   try {
     // Resolve to absolute path
     let absolutePath = path.resolve(requestedPath);
@@ -110,15 +122,22 @@ export async function validateWorkspacePath(requestedPath) {
       }
     }
 
-    // Resolve the workspace root to its real path
-    const resolvedWorkspaceRoot = await fs.realpath(WORKSPACES_ROOT);
+    // Use user-specific workspace root if provided, otherwise fall back to global WORKSPACES_ROOT
+    const effectiveRoot = userWorkspaceRoot || WORKSPACES_ROOT;
+    let resolvedWorkspaceRoot;
+    try {
+      resolvedWorkspaceRoot = await fs.realpath(effectiveRoot);
+    } catch (error) {
+      // If the root doesn't exist yet (e.g. user projects dir), use as-is
+      resolvedWorkspaceRoot = path.resolve(effectiveRoot);
+    }
 
     // Ensure the resolved path is contained within the allowed workspace root
     if (!realPath.startsWith(resolvedWorkspaceRoot + path.sep) &&
         realPath !== resolvedWorkspaceRoot) {
       return {
         valid: false,
-        error: `Workspace path must be within the allowed workspace root: ${WORKSPACES_ROOT}`
+        error: `Workspace path must be within the allowed directory: ${effectiveRoot}`
       };
     }
 
@@ -186,7 +205,8 @@ router.post('/create-workspace', async (req, res) => {
     }
 
     // Validate path safety before any operations
-    const validation = await validateWorkspacePath(workspacePath);
+    const userProjectsRoot = getUserProjectsRoot(req);
+    const validation = await validateWorkspacePath(workspacePath, userProjectsRoot);
     if (!validation.valid) {
       return res.status(400).json({
         error: 'Invalid workspace path',
@@ -214,7 +234,7 @@ router.post('/create-workspace', async (req, res) => {
       }
 
       // Add the existing workspace to the project list
-      const project = await addProjectManually(absolutePath);
+      const project = await addProjectManually(absolutePath, null, req.user?.data_dir || null);
 
       return res.json({
         success: true,
@@ -279,7 +299,7 @@ router.post('/create-workspace', async (req, res) => {
         }
 
         // Add the cloned repo path to the project list
-        const project = await addProjectManually(clonePath);
+        const project = await addProjectManually(clonePath, null, req.user?.data_dir || null);
 
         return res.json({
           success: true,
@@ -289,7 +309,7 @@ router.post('/create-workspace', async (req, res) => {
       }
 
       // Add the new workspace to the project list (no clone)
-      const project = await addProjectManually(absolutePath);
+      const project = await addProjectManually(absolutePath, null, req.user?.data_dir || null);
 
       return res.json({
         success: true,
@@ -351,7 +371,8 @@ router.get('/clone-progress', async (req, res) => {
       return;
     }
 
-    const validation = await validateWorkspacePath(workspacePath);
+    const userProjectsRoot = getUserProjectsRoot(req);
+    const validation = await validateWorkspacePath(workspacePath, userProjectsRoot);
     if (!validation.valid) {
       sendEvent('error', { message: validation.error });
       res.end();
@@ -432,7 +453,7 @@ router.get('/clone-progress', async (req, res) => {
     gitProcess.on('close', async (code) => {
       if (code === 0) {
         try {
-          const project = await addProjectManually(clonePath);
+          const project = await addProjectManually(clonePath, null, req.user?.data_dir || null);
           sendEvent('complete', { project, message: 'Repository cloned successfully' });
         } catch (error) {
           sendEvent('error', { message: `Clone succeeded but failed to add project: ${error.message}` });

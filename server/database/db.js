@@ -165,6 +165,22 @@ const runMigrations = () => {
       db.exec('ALTER TABLE users ADD COLUMN data_dir TEXT');
     }
 
+    // Backfill data_dir for existing users that don't have one
+    const usersWithoutDataDir = db.prepare('SELECT id FROM users WHERE data_dir IS NULL').all();
+    if (usersWithoutDataDir.length > 0) {
+      const USERS_BASE_DIR = process.env.CLOUDCLI_USERS_DIR || '/data/cloudcli/users';
+      console.log(`Running migration: Backfilling data_dir for ${usersWithoutDataDir.length} user(s)`);
+      for (const user of usersWithoutDataDir) {
+        const userDir = path.join(USERS_BASE_DIR, String(user.id));
+        // Create the directory structure
+        for (const dir of [userDir, path.join(userDir, '.claude'), path.join(userDir, 'workspace'), path.join(userDir, 'projects')]) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        db.prepare('UPDATE users SET data_dir = ? WHERE id = ?').run(userDir, user.id);
+        console.log(`  → User #${user.id} data_dir set to ${userDir}`);
+      }
+    }
+
     // Add user_id to session_names for per-user session naming
     const sessionNamesInfo = db.prepare("PRAGMA table_info(session_names)").all();
     const sessionNamesCols = sessionNamesInfo.map(col => col.name);

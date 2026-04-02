@@ -17,6 +17,7 @@ const userEnvManager = {
       userDir,
       path.join(userDir, '.claude'),
       path.join(userDir, 'workspace'),
+      path.join(userDir, 'projects'),
     ];
     for (const dir of dirs) {
       fs.mkdirSync(dir, { recursive: true });
@@ -32,10 +33,17 @@ const userEnvManager = {
   },
 
   /**
-   * Get the workspace directory for a user (where all projects must reside).
+   * Get the workspace directory for a user (where CLI tools operate).
    */
   getUserWorkspaceDir(userId) {
     return path.join(USERS_BASE_DIR, String(userId), 'workspace');
+  },
+
+  /**
+   * Get the projects directory for a user (where all project folders must be created).
+   */
+  getUserProjectsDir(userId) {
+    return path.join(USERS_BASE_DIR, String(userId), 'projects');
   },
 
   /**

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Eye, EyeOff, FolderOpen, FolderPlus, Loader2, Plus, X } from 'lucide-react';
 import { Button, Input } from '../../../shared/view/ui';
-import { browseFilesystemFolders, createFolderInFilesystem } from '../data/workspaceApi';
+import { browseFilesystemFolders, createFolderInFilesystem, fetchWorkspaceRoot } from '../data/workspaceApi';
 import { getParentPath, joinFolderPath } from '../utils/pathUtils';
 import type { FolderSuggestion } from '../types';
 
@@ -26,6 +26,7 @@ export default function FolderBrowserModal({
   const [newFolderName, setNewFolderName] = useState('');
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const workspaceRootRef = useRef<string>('~');
 
   const loadFolders = useCallback(async (pathToLoad: string) => {
     setLoadingFolders(true);
@@ -46,7 +47,13 @@ export default function FolderBrowserModal({
     if (!isOpen) {
       return;
     }
-    loadFolders('~');
+    // Fetch user's workspace root and start browsing from there
+    fetchWorkspaceRoot().then((root) => {
+      workspaceRootRef.current = root;
+      loadFolders(root);
+    }).catch(() => {
+      loadFolders('~');
+    });
   }, [isOpen, loadFolders]);
 
   const visibleFolders = useMemo(

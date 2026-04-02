@@ -205,8 +205,8 @@ function clearProjectDirectoryCache() {
 }
 
 // Load project configuration file
-async function loadProjectConfig() {
-  const configPath = path.join(os.homedir(), '.claude', 'project-config.json');
+async function loadProjectConfig(homeDir = null) {
+  const configPath = path.join(homeDir || os.homedir(), '.claude', 'project-config.json');
   try {
     const configData = await fs.readFile(configPath, 'utf8');
     return JSON.parse(configData);
@@ -217,8 +217,8 @@ async function loadProjectConfig() {
 }
 
 // Save project configuration file
-async function saveProjectConfig(config) {
-  const claudeDir = path.join(os.homedir(), '.claude');
+async function saveProjectConfig(config, homeDir = null) {
+  const claudeDir = path.join(homeDir || os.homedir(), '.claude');
   const configPath = path.join(claudeDir, 'project-config.json');
 
   // Ensure the .claude directory exists
@@ -263,7 +263,7 @@ async function generateDisplayName(projectName, actualProjectDir = null) {
 }
 
 // Extract the actual project directory from JSONL sessions (with caching)
-async function extractProjectDirectory(projectName) {
+async function extractProjectDirectory(projectName, homeDir = null) {
   // Check cache first
   if (projectDirectoryCache.has(projectName)) {
     return projectDirectoryCache.get(projectName);
@@ -271,14 +271,14 @@ async function extractProjectDirectory(projectName) {
 
   // Check project config for originalPath (manually added projects via UI or platform)
   // This handles projects with dashes in their directory names correctly
-  const config = await loadProjectConfig();
+  const config = await loadProjectConfig(homeDir);
   if (config[projectName]?.originalPath) {
     const originalPath = config[projectName].originalPath;
     projectDirectoryCache.set(projectName, originalPath);
     return originalPath;
   }
 
-  const projectDir = path.join(os.homedir(), '.claude', 'projects', projectName);
+  const projectDir = path.join(homeDir || os.homedir(), '.claude', 'projects', projectName);
   const cwdCounts = new Map();
   let latestTimestamp = 0;
   let latestCwd = null;
@@ -384,7 +384,7 @@ async function extractProjectDirectory(projectName) {
 async function getProjects(progressCallback = null, { userDataDir = null, userId = null } = {}) {
   const homeDir = userDataDir || os.homedir();
   const claudeDir = path.join(homeDir, '.claude', 'projects');
-  const config = await loadProjectConfig();
+  const config = await loadProjectConfig(homeDir);
   const projects = [];
   const existingProjects = new Set();
   const codexSessionsIndexRef = { sessionsByProject: null };
@@ -424,7 +424,7 @@ async function getProjects(progressCallback = null, { userDataDir = null, userId
       }
 
       // Extract actual project directory from JSONL sessions
-      const actualProjectDir = await extractProjectDirectory(entry.name);
+      const actualProjectDir = await extractProjectDirectory(entry.name, homeDir);
 
       // Get display name from config or generate one
       const customName = config[entry.name]?.displayName;
@@ -447,7 +447,7 @@ async function getProjects(progressCallback = null, { userDataDir = null, userId
 
       // Try to get sessions for this project (just first 5 for performance)
       try {
-        const sessionResult = await getSessions(entry.name, 5, 0);
+        const sessionResult = await getSessions(entry.name, 5, 0, homeDir);
         project.sessions = sessionResult.sessions || [];
         project.sessionMeta = {
           hasMore: sessionResult.hasMore,
@@ -486,7 +486,7 @@ async function getProjects(progressCallback = null, { userDataDir = null, userId
       // Also fetch Gemini sessions for this project (UI + CLI)
       try {
         const uiSessions = sessionManager.getProjectSessions(actualProjectDir) || [];
-        const cliSessions = await getGeminiCliSessions(actualProjectDir);
+        const cliSessions = await getGeminiCliSessions(actualProjectDir, homeDir);
         const uiIds = new Set(uiSessions.map(s => s.id));
         const mergedGemini = [...uiSessions, ...cliSessions.filter(s => !uiIds.has(s.id))];
         project.geminiSessions = mergedGemini;
@@ -548,7 +548,7 @@ async function getProjects(progressCallback = null, { userDataDir = null, userId
 
       if (!actualProjectDir) {
         try {
-          actualProjectDir = await extractProjectDirectory(projectName);
+          actualProjectDir = await extractProjectDirectory(projectName, homeDir);
         } catch (error) {
           // Fall back to decoded project name
           actualProjectDir = projectName.replace(/-/g, '/');
@@ -574,7 +574,7 @@ async function getProjects(progressCallback = null, { userDataDir = null, userId
 
       // Try to fetch Cursor sessions for manual projects too
       try {
-        project.cursorSessions = await getCursorSessions(actualProjectDir);
+        project.cursorSessions = await getCursorSessions(actualProjectDir, homeDir);
       } catch (e) {
         console.warn(`Could not load Cursor sessions for manual project ${projectName}:`, e.message);
       }
@@ -594,7 +594,7 @@ async function getProjects(progressCallback = null, { userDataDir = null, userId
       // Try to fetch Gemini sessions for manual projects too (UI + CLI)
       try {
         const uiSessions = sessionManager.getProjectSessions(actualProjectDir) || [];
-        const cliSessions = await getGeminiCliSessions(actualProjectDir);
+        const cliSessions = await getGeminiCliSessions(actualProjectDir, homeDir);
         const uiIds = new Set(uiSessions.map(s => s.id));
         project.geminiSessions = [...uiSessions, ...cliSessions.filter(s => !uiIds.has(s.id))];
       } catch (e) {
@@ -644,8 +644,8 @@ async function getProjects(progressCallback = null, { userDataDir = null, userId
   return projects;
 }
 
-async function getSessions(projectName, limit = 5, offset = 0) {
-  const projectDir = path.join(os.homedir(), '.claude', 'projects', projectName);
+async function getSessions(projectName, limit = 5, offset = 0, homeDir = null) {
+  const projectDir = path.join(homeDir || os.homedir(), '.claude', 'projects', projectName);
 
   try {
     const files = await fs.readdir(projectDir);
@@ -983,8 +983,8 @@ async function parseAgentTools(filePath) {
 }
 
 // Get messages for a specific session with pagination support
-async function getSessionMessages(projectName, sessionId, limit = null, offset = 0) {
-  const projectDir = path.join(os.homedir(), '.claude', 'projects', projectName);
+async function getSessionMessages(projectName, sessionId, limit = null, offset = 0, homeDir = null) {
+  const projectDir = path.join(homeDir || os.homedir(), '.claude', 'projects', projectName);
 
   try {
     const files = await fs.readdir(projectDir);
@@ -1084,8 +1084,8 @@ async function getSessionMessages(projectName, sessionId, limit = null, offset =
 }
 
 // Rename a project's display name
-async function renameProject(projectName, newDisplayName) {
-  const config = await loadProjectConfig();
+async function renameProject(projectName, newDisplayName, homeDir = null) {
+  const config = await loadProjectConfig(homeDir);
 
   if (!newDisplayName || newDisplayName.trim() === '') {
     // Remove custom name if empty, will fall back to auto-generated
@@ -1100,13 +1100,13 @@ async function renameProject(projectName, newDisplayName) {
     };
   }
 
-  await saveProjectConfig(config);
+  await saveProjectConfig(config, homeDir);
   return true;
 }
 
 // Delete a session from a project
-async function deleteSession(projectName, sessionId) {
-  const projectDir = path.join(os.homedir(), '.claude', 'projects', projectName);
+async function deleteSession(projectName, sessionId, homeDir = null) {
+  const projectDir = path.join(homeDir || os.homedir(), '.claude', 'projects', projectName);
 
   try {
     const files = await fs.readdir(projectDir);
@@ -1157,9 +1157,9 @@ async function deleteSession(projectName, sessionId) {
 }
 
 // Check if a project is empty (has no sessions)
-async function isProjectEmpty(projectName) {
+async function isProjectEmpty(projectName, homeDir = null) {
   try {
-    const sessionsResult = await getSessions(projectName, 1, 0);
+    const sessionsResult = await getSessions(projectName, 1, 0, homeDir);
     return sessionsResult.total === 0;
   } catch (error) {
     console.error(`Error checking if project ${projectName} is empty:`, error);
@@ -1168,21 +1168,22 @@ async function isProjectEmpty(projectName) {
 }
 
 // Delete a project (force=true to delete even with sessions)
-async function deleteProject(projectName, force = false) {
-  const projectDir = path.join(os.homedir(), '.claude', 'projects', projectName);
+async function deleteProject(projectName, force = false, homeDir = null) {
+  const projectDir = path.join(homeDir || os.homedir(), '.claude', 'projects', projectName);
 
   try {
-    const isEmpty = await isProjectEmpty(projectName);
+    const isEmpty = await isProjectEmpty(projectName, homeDir);
     if (!isEmpty && !force) {
       throw new Error('Cannot delete project with existing sessions');
     }
 
-    const config = await loadProjectConfig();
+    const effectiveHome = homeDir || os.homedir();
+    const config = await loadProjectConfig(effectiveHome);
     let projectPath = config[projectName]?.path || config[projectName]?.originalPath;
 
     // Fallback to extractProjectDirectory if projectPath is not in config
     if (!projectPath) {
-      projectPath = await extractProjectDirectory(projectName);
+      projectPath = await extractProjectDirectory(projectName, effectiveHome);
     }
 
     // Remove the project directory (includes all Claude sessions)
@@ -1191,10 +1192,10 @@ async function deleteProject(projectName, force = false) {
     // Delete all Codex sessions associated with this project
     if (projectPath) {
       try {
-        const codexSessions = await getCodexSessions(projectPath, { limit: 0 });
+        const codexSessions = await getCodexSessions(projectPath, { limit: 0, homeDir: effectiveHome });
         for (const session of codexSessions) {
           try {
-            await deleteCodexSession(session.id);
+            await deleteCodexSession(session.id, effectiveHome);
           } catch (err) {
             console.warn(`Failed to delete Codex session ${session.id}:`, err.message);
           }
@@ -1206,7 +1207,7 @@ async function deleteProject(projectName, force = false) {
       // Delete Cursor sessions directory if it exists
       try {
         const hash = crypto.createHash('md5').update(projectPath).digest('hex');
-        const cursorProjectDir = path.join(os.homedir(), '.cursor', 'chats', hash);
+        const cursorProjectDir = path.join(effectiveHome, '.cursor', 'chats', hash);
         await fs.rm(cursorProjectDir, { recursive: true, force: true });
       } catch (err) {
         // Cursor dir may not exist, ignore
@@ -1215,7 +1216,7 @@ async function deleteProject(projectName, force = false) {
 
     // Remove from project config
     delete config[projectName];
-    await saveProjectConfig(config);
+    await saveProjectConfig(config, effectiveHome);
 
     return true;
   } catch (error) {
@@ -1225,7 +1226,7 @@ async function deleteProject(projectName, force = false) {
 }
 
 // Add a project manually to the config (without creating folders)
-async function addProjectManually(projectPath, displayName = null) {
+async function addProjectManually(projectPath, displayName = null, homeDir = null) {
   const absolutePath = path.resolve(projectPath);
 
   try {
@@ -1239,8 +1240,9 @@ async function addProjectManually(projectPath, displayName = null) {
   const projectName = absolutePath.replace(/[\\/:\s~_]/g, '-');
 
   // Check if project already exists in config
-  const config = await loadProjectConfig();
-  const projectDir = path.join(os.homedir(), '.claude', 'projects', projectName);
+  const effectiveHome = homeDir || os.homedir();
+  const config = await loadProjectConfig(effectiveHome);
+  const projectDir = path.join(effectiveHome, '.claude', 'projects', projectName);
 
   if (config[projectName]) {
     throw new Error(`Project already configured for path: ${absolutePath}`);
@@ -1259,7 +1261,7 @@ async function addProjectManually(projectPath, displayName = null) {
     config[projectName].displayName = displayName;
   }
 
-  await saveProjectConfig(config);
+  await saveProjectConfig(config, effectiveHome);
 
 
   return {
@@ -1274,11 +1276,11 @@ async function addProjectManually(projectPath, displayName = null) {
 }
 
 // Fetch Cursor sessions for a given project path
-async function getCursorSessions(projectPath) {
+async function getCursorSessions(projectPath, homeDir = null) {
   try {
     // Calculate cwdID hash for the project path (Cursor uses MD5 hash)
     const cwdId = crypto.createHash('md5').update(projectPath).digest('hex');
-    const cursorChatsPath = path.join(os.homedir(), '.cursor', 'chats', cwdId);
+    const cursorChatsPath = path.join(homeDir || os.homedir(), '.cursor', 'chats', cwdId);
 
     // Check if the directory exists
     try {
@@ -1423,8 +1425,8 @@ async function findCodexJsonlFiles(dir) {
   return files;
 }
 
-async function buildCodexSessionsIndex() {
-  const codexSessionsDir = path.join(os.homedir(), '.codex', 'sessions');
+async function buildCodexSessionsIndex(homeDir = null) {
+  const codexSessionsDir = path.join(homeDir || os.homedir(), '.codex', 'sessions');
   const sessionsByProject = new Map();
 
   try {
@@ -1477,7 +1479,7 @@ async function buildCodexSessionsIndex() {
 
 // Fetch Codex sessions for a given project path
 async function getCodexSessions(projectPath, options = {}) {
-  const { limit = 5, indexRef = null } = options;
+  const { limit = 5, indexRef = null, homeDir = null } = options;
   try {
     const normalizedProjectPath = normalizeComparablePath(projectPath);
     if (!normalizedProjectPath) {
@@ -1485,10 +1487,10 @@ async function getCodexSessions(projectPath, options = {}) {
     }
 
     if (indexRef && !indexRef.sessionsByProject) {
-      indexRef.sessionsByProject = await buildCodexSessionsIndex();
+      indexRef.sessionsByProject = await buildCodexSessionsIndex(homeDir);
     }
 
-    const sessionsByProject = indexRef?.sessionsByProject || await buildCodexSessionsIndex();
+    const sessionsByProject = indexRef?.sessionsByProject || await buildCodexSessionsIndex(homeDir);
     const sessions = sessionsByProject.get(normalizedProjectPath) || [];
 
     // Return limited sessions for performance (0 = unlimited for deletion)
@@ -1590,9 +1592,9 @@ async function parseCodexSessionFile(filePath) {
 }
 
 // Get messages for a specific Codex session
-async function getCodexSessionMessages(sessionId, limit = null, offset = 0) {
+async function getCodexSessionMessages(sessionId, limit = null, offset = 0, homeDir = null) {
   try {
-    const codexSessionsDir = path.join(os.homedir(), '.codex', 'sessions');
+    const codexSessionsDir = path.join(homeDir || os.homedir(), '.codex', 'sessions');
 
     // Find the session file by searching for the session ID
     const findSessionFile = async (dir) => {
@@ -1835,9 +1837,9 @@ async function getCodexSessionMessages(sessionId, limit = null, offset = 0) {
   }
 }
 
-async function deleteCodexSession(sessionId) {
+async function deleteCodexSession(sessionId, homeDir = null) {
   try {
-    const codexSessionsDir = path.join(os.homedir(), '.codex', 'sessions');
+    const codexSessionsDir = path.join(homeDir || os.homedir(), '.codex', 'sessions');
 
     const findJsonlFiles = async (dir) => {
       const files = [];
@@ -1872,11 +1874,12 @@ async function deleteCodexSession(sessionId) {
   }
 }
 
-async function searchConversations(query, limit = 50, onProjectResult = null, signal = null) {
+async function searchConversations(query, limit = 50, onProjectResult = null, signal = null, homeDir = null) {
   const safeQuery = typeof query === 'string' ? query.trim() : '';
   const safeLimit = Math.max(1, Math.min(Number.isFinite(limit) ? limit : 50, 200));
-  const claudeDir = path.join(os.homedir(), '.claude', 'projects');
-  const config = await loadProjectConfig();
+  const effectiveHome = homeDir || os.homedir();
+  const claudeDir = path.join(effectiveHome, '.claude', 'projects');
+  const config = await loadProjectConfig(effectiveHome);
   const results = [];
   let totalMatches = 0;
   const words = safeQuery.toLowerCase().split(/\s+/).filter(w => w.length > 0);
@@ -2101,11 +2104,11 @@ async function searchConversations(query, limit = 50, onProjectResult = null, si
 
       // Search Codex sessions for this project
       try {
-        const actualProjectDir = await extractProjectDirectory(projectName);
+        const actualProjectDir = await extractProjectDirectory(projectName, effectiveHome);
         if (actualProjectDir && !isAborted() && totalMatches < safeLimit) {
           await searchCodexSessionsForProject(
             actualProjectDir, projectResult, words, allWordsMatch, extractText, isSystemMessage,
-            buildSnippet, safeLimit, () => totalMatches, (n) => { totalMatches += n; }, isAborted
+            buildSnippet, safeLimit, () => totalMatches, (n) => { totalMatches += n; }, isAborted, effectiveHome
           );
         }
       } catch {
@@ -2114,11 +2117,11 @@ async function searchConversations(query, limit = 50, onProjectResult = null, si
 
       // Search Gemini sessions for this project
       try {
-        const actualProjectDir = await extractProjectDirectory(projectName);
+        const actualProjectDir = await extractProjectDirectory(projectName, effectiveHome);
         if (actualProjectDir && !isAborted() && totalMatches < safeLimit) {
           await searchGeminiSessionsForProject(
             actualProjectDir, projectResult, words, allWordsMatch,
-            buildSnippet, safeLimit, () => totalMatches, (n) => { totalMatches += n; }
+            buildSnippet, safeLimit, () => totalMatches, (n) => { totalMatches += n; }, effectiveHome
           );
         }
       } catch {
@@ -2144,11 +2147,11 @@ async function searchConversations(query, limit = 50, onProjectResult = null, si
 
 async function searchCodexSessionsForProject(
   projectPath, projectResult, words, allWordsMatch, extractText, isSystemMessage,
-  buildSnippet, limit, getTotalMatches, addMatches, isAborted
+  buildSnippet, limit, getTotalMatches, addMatches, isAborted, homeDir = null
 ) {
   const normalizedProjectPath = normalizeComparablePath(projectPath);
   if (!normalizedProjectPath) return;
-  const codexSessionsDir = path.join(os.homedir(), '.codex', 'sessions');
+  const codexSessionsDir = path.join(homeDir || os.homedir(), '.codex', 'sessions');
   try {
     await fs.access(codexSessionsDir);
   } catch {
@@ -2249,7 +2252,7 @@ async function searchCodexSessionsForProject(
 
 async function searchGeminiSessionsForProject(
   projectPath, projectResult, words, allWordsMatch,
-  buildSnippet, limit, getTotalMatches, addMatches
+  buildSnippet, limit, getTotalMatches, addMatches, homeDir = null
 ) {
   // 1) Search in-memory sessions (created via UI)
   for (const [sessionId, session] of sessionManager.sessions) {
@@ -2301,7 +2304,7 @@ async function searchGeminiSessionsForProject(
   const normalizedProjectPath = normalizeComparablePath(projectPath);
   if (!normalizedProjectPath) return;
 
-  const geminiTmpDir = path.join(os.homedir(), '.gemini', 'tmp');
+  const geminiTmpDir = path.join(homeDir || os.homedir(), '.gemini', 'tmp');
   try {
     await fs.access(geminiTmpDir);
   } catch {
@@ -2411,11 +2414,11 @@ async function searchGeminiSessionsForProject(
   }
 }
 
-async function getGeminiCliSessions(projectPath) {
+async function getGeminiCliSessions(projectPath, homeDir = null) {
   const normalizedProjectPath = normalizeComparablePath(projectPath);
   if (!normalizedProjectPath) return [];
 
-  const geminiTmpDir = path.join(os.homedir(), '.gemini', 'tmp');
+  const geminiTmpDir = path.join(homeDir || os.homedir(), '.gemini', 'tmp');
   try {
     await fs.access(geminiTmpDir);
   } catch {
@@ -2487,8 +2490,8 @@ async function getGeminiCliSessions(projectPath) {
   );
 }
 
-async function getGeminiCliSessionMessages(sessionId) {
-  const geminiTmpDir = path.join(os.homedir(), '.gemini', 'tmp');
+async function getGeminiCliSessionMessages(sessionId, homeDir = null) {
+  const geminiTmpDir = path.join(homeDir || os.homedir(), '.gemini', 'tmp');
   let projectDirs;
   try {
     projectDirs = await fs.readdir(geminiTmpDir);
