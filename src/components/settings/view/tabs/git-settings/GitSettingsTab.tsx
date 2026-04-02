@@ -1,7 +1,9 @@
-import { Check } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Check, Copy, Key } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useGitSettings } from '../../../hooks/useGitSettings';
 import { Button, Input } from '../../../../../shared/view/ui';
+import { authenticatedFetch } from '../../../../../utils/api';
 import SettingsCard from '../../SettingsCard';
 import SettingsSection from '../../SettingsSection';
 
@@ -17,6 +19,28 @@ export default function GitSettingsTab() {
     saveStatus,
     saveGitConfig,
   } = useGitSettings();
+
+  const [sshPublicKey, setSshPublicKey] = useState<string | null>(null);
+  const [sshKeyCopied, setSshKeyCopied] = useState(false);
+
+  useEffect(() => {
+    authenticatedFetch('/api/user/ssh-public-key')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && data.publicKey) {
+          setSshPublicKey(data.publicKey);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const copySshKey = useCallback(() => {
+    if (!sshPublicKey) return;
+    navigator.clipboard.writeText(sshPublicKey).then(() => {
+      setSshKeyCopied(true);
+      setTimeout(() => setSshKeyCopied(false), 2000);
+    });
+  }, [sshPublicKey]);
 
   return (
     <div className="space-y-8">
@@ -76,6 +100,43 @@ export default function GitSettingsTab() {
           </div>
         </SettingsCard>
       </SettingsSection>
+
+      {/* SSH Public Key Section */}
+      {sshPublicKey && (
+        <SettingsSection
+          title="SSH Public Key"
+          description="Add this key to your GitHub/GitLab account to enable SSH-based git operations (clone, push, pull)."
+        >
+          <SettingsCard className="p-4">
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <Key className="h-4 w-4 text-muted-foreground" />
+                <span>ed25519 Public Key</span>
+              </div>
+              <div className="relative">
+                <pre className="overflow-x-auto rounded-lg border border-border bg-muted/40 p-3 text-xs text-foreground select-all break-all whitespace-pre-wrap">
+                  {sshPublicKey}
+                </pre>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-2 top-2 h-7 px-2"
+                  onClick={copySshKey}
+                >
+                  {sshKeyCopied ? (
+                    <Check className="h-3.5 w-3.5 text-green-500" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Copy this key and add it to your Git hosting provider (e.g. GitHub → Settings → SSH and GPG keys → New SSH key).
+              </p>
+            </div>
+          </SettingsCard>
+        </SettingsSection>
+      )}
     </div>
   );
 }

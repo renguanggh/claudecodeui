@@ -79,7 +79,7 @@ export default function StepConfiguration({
               type="text"
               value={githubUrl}
               onChange={(event) => onGithubUrlChange(event.target.value)}
-              placeholder="https://github.com/username/repository"
+              placeholder="https://github.com/user/repo or git@github.com:user/repo.git"
               className="w-full"
               disabled={isCreating}
             />

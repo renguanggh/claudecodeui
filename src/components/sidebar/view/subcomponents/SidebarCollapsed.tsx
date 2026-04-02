@@ -1,6 +1,8 @@
-import { Settings, Sparkles, PanelLeftOpen, User } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Settings, Sparkles, PanelLeftOpen, User, LogOut, FolderOpen } from 'lucide-react';
 import type { TFunction } from 'i18next';
 import { useAuth } from '../../../auth/context/AuthContext';
+import ProjectsFolderBrowser from './ProjectsFolderBrowser';
 
 type SidebarCollapsedProps = {
   onExpand: () => void;
@@ -17,7 +19,28 @@ export default function SidebarCollapsed({
   onShowVersionModal,
   t,
 }: SidebarCollapsedProps) {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const [showMenu, setShowMenu] = useState(false);
+  const [showFolderBrowser, setShowFolderBrowser] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showMenu]);
+
+  const handleLogout = useCallback(() => {
+    setShowMenu(false);
+    if (window.confirm('Are you sure you want to logout?')) {
+      logout();
+    }
+  }, [logout]);
   return (
     <div className="flex h-full w-12 flex-col items-center gap-1 bg-background/80 py-3 backdrop-blur-sm">
       {/* Expand button with brand logo */}
@@ -43,11 +66,32 @@ export default function SidebarCollapsed({
       </button>
 
       {/* User */}
-      <div
-        className="flex h-8 w-8 items-center justify-center rounded-lg"
-        title={user?.username || t('actions.joinCommunity')}
-      >
-        <User className="h-4 w-4 text-muted-foreground" />
+      <div className="relative" ref={menuRef}>
+        <button
+          onClick={() => setShowMenu(!showMenu)}
+          className="group flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-accent/80"
+          title={user?.username || ''}
+        >
+          <User className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-foreground" />
+        </button>
+        {showMenu && (
+          <div className="absolute bottom-0 left-full ml-1 w-40 rounded-lg border border-border bg-popover p-1 shadow-lg">
+            <button
+              onMouseDown={(e) => { e.preventDefault(); setShowMenu(false); setShowFolderBrowser(true); }}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+              Manage Project Folders
+            </button>
+            <button
+              onMouseDown={(e) => { e.preventDefault(); handleLogout(); }}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-sm text-red-500 transition-colors hover:bg-red-500/10"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Logout
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Update indicator */}
@@ -62,6 +106,8 @@ export default function SidebarCollapsed({
           <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" />
         </button>
       )}
+
+      <ProjectsFolderBrowser isOpen={showFolderBrowser} onClose={() => setShowFolderBrowser(false)} />
     </div>
   );
 }

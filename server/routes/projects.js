@@ -266,9 +266,11 @@ router.post('/create-workspace', async (req, res) => {
           githubToken = newGithubToken;
         }
 
-        // Extract repo name from URL for the clone destination
+        // Extract repo name from URL (supports both HTTPS and SSH formats)
         const normalizedUrl = githubUrl.replace(/\/+$/, '').replace(/\.git$/, '');
-        const repoName = normalizedUrl.split('/').pop() || 'repository';
+        const repoName = normalizedUrl.includes(':') && !normalizedUrl.includes('://')
+          ? normalizedUrl.split(':').pop().split('/').pop() || 'repository'
+          : normalizedUrl.split('/').pop() || 'repository';
         const clonePath = path.join(absolutePath, repoName);
 
         // Check if clone destination already exists to prevent data loss
@@ -284,7 +286,7 @@ router.post('/create-workspace', async (req, res) => {
 
         // Clone the repository into a subfolder
         try {
-          await cloneGitHubRepository(githubUrl, clonePath, githubToken);
+          await cloneGitHubRepository(githubUrl, clonePath, githubToken, req.user || null);
         } catch (error) {
           // Only clean up if clone created partial data (check if dir exists and is empty or partial)
           try {
@@ -397,8 +399,13 @@ router.get('/clone-progress', async (req, res) => {
       githubToken = newGithubToken;
     }
 
+    // Extract repo name from URL (supports both HTTPS and SSH formats)
     const normalizedUrl = githubUrl.replace(/\/+$/, '').replace(/\.git$/, '');
-    const repoName = normalizedUrl.split('/').pop() || 'repository';
+    // SSH: git@github.com:user/repo → split by ':' then '/'
+    // HTTPS: https://github.com/user/repo → split by '/'
+    const repoName = normalizedUrl.includes(':') && !normalizedUrl.includes('://')
+      ? normalizedUrl.split(':').pop().split('/').pop() || 'repository'
+      : normalizedUrl.split('/').pop() || 'repository';
     const clonePath = path.join(absolutePath, repoName);
 
     // Check if clone destination already exists to prevent data loss
@@ -425,12 +432,14 @@ router.get('/clone-progress', async (req, res) => {
 
     sendEvent('progress', { message: `Cloning into '${repoName}'...` });
 
+    // Build environment: use user-specific env (includes GIT_SSH_COMMAND) if available
+    const cloneEnv = req.user
+      ? { ...userEnvManager.buildUserEnv(req.user), GIT_TERMINAL_PROMPT: '0' }
+      : { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+
     const gitProcess = spawn('git', ['clone', '--progress', cloneUrl, clonePath], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        GIT_TERMINAL_PROMPT: '0'
-      }
+      env: cloneEnv
     });
 
     let lastError = '';
@@ -502,7 +511,7 @@ router.get('/clone-progress', async (req, res) => {
 /**
  * Helper function to clone a GitHub repository
  */
-function cloneGitHubRepository(githubUrl, destinationPath, githubToken = null) {
+function cloneGitHubRepository(githubUrl, destinationPath, githubToken = null, user = null) {
   return new Promise((resolve, reject) => {
     let cloneUrl = githubUrl;
 
@@ -517,12 +526,13 @@ function cloneGitHubRepository(githubUrl, destinationPath, githubToken = null) {
       }
     }
 
+    // Build environment: use user-specific env (includes GIT_SSH_COMMAND) if available
+    const spawnEnv = user ? { ...userEnvManager.buildUserEnv(user), GIT_TERMINAL_PROMPT: '0' }
+      : { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+
     const gitProcess = spawn('git', ['clone', '--progress', cloneUrl, destinationPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        GIT_TERMINAL_PROMPT: '0'
-      }
+      env: spawnEnv
     });
 
     let stdout = '';

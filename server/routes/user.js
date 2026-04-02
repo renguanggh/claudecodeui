@@ -3,6 +3,7 @@ import { userDb } from '../database/db.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { getSystemGitConfig } from '../utils/gitConfig.js';
 import { spawn } from 'child_process';
+import userEnvManager from '../services/user-env-manager.js';
 
 const router = express.Router();
 
@@ -83,6 +84,17 @@ router.post('/git-config', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Error updating git config:', error);
     res.status(500).json({ error: 'Failed to update git configuration' });
+  }
+});
+
+// GET /api/user/ssh-public-key — Get the user's SSH public key
+router.get('/ssh-public-key', authenticateToken, (req, res) => {
+  try {
+    const publicKey = userEnvManager.getSshPublicKey(req.user.id);
+    res.json({ success: true, publicKey: publicKey || null });
+  } catch (error) {
+    console.error('Error getting SSH public key:', error);
+    res.status(500).json({ error: 'Failed to get SSH public key' });
   }
 });
 

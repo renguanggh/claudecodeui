@@ -86,6 +86,13 @@ router.post('/', async (req, res) => {
     const dataDir = userEnvManager.initUserDataDir(user.id);
     userDb.updateUserDataDir(user.id, dataDir);
 
+    // Generate SSH key pair for the user
+    try {
+      userEnvManager.generateSshKey(user.id, gitEmail || '');
+    } catch (err) {
+      console.warn(`Failed to generate SSH key for user ${user.id}:`, err.message);
+    }
+
     res.json({
       success: true,
       user: {

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FolderPlus, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import ErrorBanner from './components/ErrorBanner';
@@ -8,7 +8,7 @@ import StepTypeSelection from './components/StepTypeSelection';
 import WizardFooter from './components/WizardFooter';
 import WizardProgress from './components/WizardProgress';
 import { useGithubTokens } from './hooks/useGithubTokens';
-import { cloneWorkspaceWithProgress, createWorkspaceRequest } from './data/workspaceApi';
+import { cloneWorkspaceWithProgress, createWorkspaceRequest, fetchWorkspaceRoot } from './data/workspaceApi';
 import { isCloneWorkflow, shouldShowGithubAuthentication } from './utils/pathUtils';
 import type { TokenMode, WizardFormState, WizardStep, WorkspaceType } from './types';
 
@@ -44,6 +44,11 @@ export default function ProjectCreationWizard({
     setFormState((previous) => ({ ...previous, selectedGithubToken: tokenId }));
   }, []);
 
+  const workspaceRootRef = useRef<string | null>(null);
+  useEffect(() => {
+    fetchWorkspaceRoot().then((root) => { workspaceRootRef.current = root; }).catch(() => {});
+  }, []);
+
   const {
     tokens: availableTokens,
     loading: loadingTokens,
@@ -70,6 +75,16 @@ export default function ProjectCreationWizard({
     [updateField],
   );
 
+  // Validate that the path is not the projects root directory itself
+  const validateNotProjectsRoot = useCallback((pathToCheck: string): boolean => {
+    const trimmed = pathToCheck.trim().replace(/\/+$/, '');
+    if (workspaceRootRef.current && trimmed === workspaceRootRef.current.replace(/\/+$/, '')) {
+      setError('Cannot use the projects root directory as a workspace. Please create a subdirectory (e.g. ' + workspaceRootRef.current + '/my-project).');
+      return false;
+    }
+    return true;
+  }, []);
+
   const handleNext = useCallback(() => {
     setError(null);
 
@@ -87,6 +102,7 @@ export default function ProjectCreationWizard({
         setError(t('projectWizard.errors.providePath'));
         return;
       }
+      if (!validateNotProjectsRoot(formState.workspacePath)) return;
       setStep(3);
     }
   }, [formState.workspacePath, formState.workspaceType, step, t]);
@@ -100,6 +116,11 @@ export default function ProjectCreationWizard({
     setIsCreating(true);
     setError(null);
     setCloneProgress('');
+
+    if (!validateNotProjectsRoot(formState.workspacePath)) {
+      setIsCreating(false);
+      return;
+    }
 
     try {
       const shouldCloneRepository = isCloneWorkflow(formState.workspaceType, formState.githubUrl);
@@ -200,7 +221,7 @@ export default function ProjectCreationWizard({
               onNewGithubTokenChange={(newGithubToken) =>
                 updateField('newGithubToken', newGithubToken)
               }
-              onAdvanceToConfirm={() => setStep(3)}
+              onAdvanceToConfirm={() => { if (validateNotProjectsRoot(formState.workspacePath)) setStep(3); }}
             />
           )}
 

@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
@@ -173,11 +174,34 @@ const runMigrations = () => {
       for (const user of usersWithoutDataDir) {
         const userDir = path.join(USERS_BASE_DIR, String(user.id));
         // Create the directory structure
-        for (const dir of [userDir, path.join(userDir, '.claude'), path.join(userDir, 'workspace'), path.join(userDir, 'projects')]) {
+        for (const dir of [userDir, path.join(userDir, '.claude'), path.join(userDir, '.ssh'), path.join(userDir, 'workspace'), path.join(userDir, 'projects')]) {
           fs.mkdirSync(dir, { recursive: true });
         }
         db.prepare('UPDATE users SET data_dir = ? WHERE id = ?').run(userDir, user.id);
         console.log(`  → User #${user.id} data_dir set to ${userDir}`);
+      }
+    }
+
+    // Generate SSH keys for existing users that don't have one
+    {
+      const USERS_BASE_DIR = process.env.CLOUDCLI_USERS_DIR || '/data/cloudcli/users';
+      const allUsers = db.prepare('SELECT id, git_email FROM users').all();
+      for (const user of allUsers) {
+        const keyPath = path.join(USERS_BASE_DIR, String(user.id), '.ssh', 'id_ed25519');
+        if (!fs.existsSync(keyPath)) {
+          try {
+            const sshDir = path.join(USERS_BASE_DIR, String(user.id), '.ssh');
+            fs.mkdirSync(sshDir, { recursive: true });
+            const comment = user.git_email || `user-${user.id}@cloudcli`;
+            execSync(`ssh-keygen -t ed25519 -C "${comment}" -f "${keyPath}" -N ""`, { stdio: 'ignore' });
+            fs.chmodSync(sshDir, 0o700);
+            fs.chmodSync(keyPath, 0o600);
+            fs.chmodSync(keyPath + '.pub', 0o644);
+            console.log(`  → Generated SSH key for user #${user.id}`);
+          } catch (err) {
+            console.warn(`  → Failed to generate SSH key for user #${user.id}:`, err.message);
+          }
+        }
       }
     }
 

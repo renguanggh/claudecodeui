@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs';
+import { execSync } from 'child_process';
 
 // Base directory for all user data. Override with CLOUDCLI_USERS_DIR env var.
 const USERS_BASE_DIR = process.env.CLOUDCLI_USERS_DIR || '/data/cloudcli/users';
@@ -16,6 +17,7 @@ const userEnvManager = {
     const dirs = [
       userDir,
       path.join(userDir, '.claude'),
+      path.join(userDir, '.ssh'),
       path.join(userDir, 'workspace'),
       path.join(userDir, 'projects'),
     ];
@@ -62,6 +64,59 @@ const userEnvManager = {
   },
 
   /**
+   * Generate an SSH key pair for a user.
+   * @param {number} userId
+   * @param {string} email - Email for the SSH key comment
+   */
+  generateSshKey(userId, email) {
+    const userDir = path.join(USERS_BASE_DIR, String(userId));
+    const sshDir = path.join(userDir, '.ssh');
+    const keyPath = path.join(sshDir, 'id_ed25519');
+
+    // Skip if key already exists
+    if (fs.existsSync(keyPath)) {
+      return keyPath;
+    }
+
+    fs.mkdirSync(sshDir, { recursive: true });
+
+    const comment = email || `user-${userId}@cloudcli`;
+    execSync(`ssh-keygen -t ed25519 -C "${comment}" -f "${keyPath}" -N ""`, {
+      stdio: 'ignore',
+    });
+
+    // Set proper permissions
+    fs.chmodSync(sshDir, 0o700);
+    fs.chmodSync(keyPath, 0o600);
+    fs.chmodSync(keyPath + '.pub', 0o644);
+
+    return keyPath;
+  },
+
+  /**
+   * Get the SSH public key for a user, or null if not generated.
+   * @param {number} userId
+   * @returns {string|null}
+   */
+  getSshPublicKey(userId) {
+    const pubKeyPath = path.join(USERS_BASE_DIR, String(userId), '.ssh', 'id_ed25519.pub');
+    try {
+      return fs.readFileSync(pubKeyPath, 'utf8').trim();
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * Get the SSH private key path for a user.
+   * @param {number} userId
+   * @returns {string}
+   */
+  getSshKeyPath(userId) {
+    return path.join(USERS_BASE_DIR, String(userId), '.ssh', 'id_ed25519');
+  },
+
+  /**
    * Build environment variables for spawning processes as a specific user.
    * This is the core isolation mechanism:
    * - CLAUDE_CONFIG_DIR → isolates Claude CLI config/sessions/credentials
@@ -73,7 +128,8 @@ const userEnvManager = {
    */
   buildUserEnv(user) {
     const userDir = user.data_dir || path.join(USERS_BASE_DIR, String(user.id));
-    return {
+    const sshKeyPath = path.join(userDir, '.ssh', 'id_ed25519');
+    const env = {
       ...process.env,
       // Claude CLI isolation (official env var)
       CLAUDE_CONFIG_DIR: path.join(userDir, '.claude'),
@@ -89,6 +145,11 @@ const userEnvManager = {
       COLORTERM: 'truecolor',
       FORCE_COLOR: '3',
     };
+    // SSH key isolation — use user's key and auto-accept new host keys
+    if (fs.existsSync(sshKeyPath)) {
+      env.GIT_SSH_COMMAND = `ssh -i "${sshKeyPath}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="${path.join(userDir, '.ssh', 'known_hosts')}"`;
+    }
+    return env;
   },
 
   /**

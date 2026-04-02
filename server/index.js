@@ -800,6 +800,56 @@ app.post('/api/create-folder', authenticateToken, async (req, res) => {
     }
 });
 
+app.delete('/api/delete-folder', authenticateToken, async (req, res) => {
+    try {
+        const { path: folderPath } = req.body;
+        if (!folderPath) {
+            return res.status(400).json({ error: 'Path is required' });
+        }
+        const userProjectsRoot = req.user?.id ? userEnvManager.getUserProjectsDir(req.user.id) : null;
+        if (!userProjectsRoot) {
+            return res.status(403).json({ error: 'User projects directory not configured' });
+        }
+        const resolvedPath = path.resolve(folderPath);
+
+        // Must be inside user's projects dir
+        if (!resolvedPath.startsWith(userProjectsRoot + path.sep)) {
+            return res.status(403).json({ error: 'Cannot delete folders outside your projects directory' });
+        }
+        // Must be a direct child of projects root (not the root itself, not nested)
+        if (path.dirname(resolvedPath) !== userProjectsRoot) {
+            return res.status(403).json({ error: 'Can only delete top-level project folders' });
+        }
+        try {
+            const stats = await fs.promises.stat(resolvedPath);
+            if (!stats.isDirectory()) {
+                return res.status(400).json({ error: 'Path is not a directory' });
+            }
+        } catch (err) {
+            return res.status(404).json({ error: 'Directory not found' });
+        }
+        // Check if any project is using this directory
+        const userProjects = await getProjects(null, {
+            userDataDir: req.user?.data_dir || null,
+            userId: req.user?.id || null,
+        });
+        const conflicting = userProjects.find(p => {
+            const projectPath = p.path || p.fullPath || '';
+            return projectPath === resolvedPath || projectPath.startsWith(resolvedPath + path.sep);
+        });
+        if (conflicting) {
+            return res.status(409).json({
+                error: `Cannot delete: this directory is used by project "${conflicting.displayName || conflicting.name}". Please remove the project first.`
+            });
+        }
+        await fs.promises.rm(resolvedPath, { recursive: true, force: true });
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error deleting folder:', error);
+        res.status(500).json({ error: 'Failed to delete folder' });
+    }
+});
+
 // Read file content endpoint
 app.get('/api/projects/:projectName/file', authenticateToken, async (req, res) => {
     try {
