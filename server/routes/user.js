@@ -71,13 +71,9 @@ router.post('/git-config', authenticateToken, async (req, res) => {
 
     userDb.updateGitConfig(userId, gitName, gitEmail);
 
-    try {
-      await spawnAsync('git', ['config', '--global', 'user.name', gitName]);
-      await spawnAsync('git', ['config', '--global', 'user.email', gitEmail]);
-      console.log(`Applied git config globally: ${gitName} <${gitEmail}>`);
-    } catch (gitError) {
-      console.error('Error applying git config:', gitError);
-    }
+    // Git identity is now injected via GIT_AUTHOR_NAME/GIT_COMMITTER_NAME env vars
+    // at spawn time (in user-env-manager.js). No global git config modification needed.
+    console.log(`Saved git config for user ${userId}: ${gitName} <${gitEmail}>`);
 
     res.json({
       success: true,

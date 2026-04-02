@@ -5,6 +5,7 @@ import { promises as fs } from 'fs';
 import { extractProjectDirectory } from '../projects.js';
 import { queryClaudeSDK } from '../claude-sdk.js';
 import { spawnCursor } from '../cursor-cli.js';
+import userEnvManager from '../services/user-env-manager.js';
 
 const router = express.Router();
 const COMMIT_DIFF_CHARACTER_LIMIT = 500_000;
@@ -44,6 +45,15 @@ function spawnAsync(command, args, options = {}) {
       reject(error);
     });
   });
+}
+
+// Helper: create spawnAsync options with user-specific git env
+function gitSpawnOptions(cwd, user) {
+  const opts = { cwd };
+  if (user?.data_dir) {
+    opts.env = userEnvManager.buildUserEnv(user);
+  }
+  return opts;
 }
 
 // Input validation helpers (defense-in-depth)
@@ -538,8 +548,8 @@ router.post('/initial-commit', async (req, res) => {
     // Add all files
     await spawnAsync('git', ['add', '.'], { cwd: projectPath });
 
-    // Create initial commit
-    const { stdout } = await spawnAsync('git', ['commit', '-m', 'Initial commit'], { cwd: projectPath });
+    // Create initial commit (with user-specific git identity)
+    const { stdout } = await spawnAsync('git', ['commit', '-m', 'Initial commit'], gitSpawnOptions(projectPath, req.user));
 
     res.json({ success: true, output: stdout, message: 'Initial commit created successfully' });
   } catch (error) {
@@ -578,8 +588,8 @@ router.post('/commit', async (req, res) => {
       await spawnAsync('git', ['add', '--', repositoryRelativeFilePath], { cwd: repositoryRootPath });
     }
 
-    // Commit with message
-    const { stdout } = await spawnAsync('git', ['commit', '-m', message], { cwd: repositoryRootPath });
+    // Commit with message (with user-specific git identity)
+    const { stdout } = await spawnAsync('git', ['commit', '-m', message], gitSpawnOptions(repositoryRootPath, req.user));
     
     res.json({ success: true, output: stdout });
   } catch (error) {

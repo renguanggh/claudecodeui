@@ -381,8 +381,9 @@ async function extractProjectDirectory(projectName) {
   }
 }
 
-async function getProjects(progressCallback = null) {
-  const claudeDir = path.join(os.homedir(), '.claude', 'projects');
+async function getProjects(progressCallback = null, { userDataDir = null, userId = null } = {}) {
+  const homeDir = userDataDir || os.homedir();
+  const claudeDir = path.join(homeDir, '.claude', 'projects');
   const config = await loadProjectConfig();
   const projects = [];
   const existingProjects = new Set();
@@ -459,27 +460,28 @@ async function getProjects(progressCallback = null) {
           total: 0
         };
       }
-      applyCustomSessionNames(project.sessions, 'claude');
+      applyCustomSessionNames(project.sessions, 'claude', userId);
 
       // Also fetch Cursor sessions for this project
       try {
-        project.cursorSessions = await getCursorSessions(actualProjectDir);
+        project.cursorSessions = await getCursorSessions(actualProjectDir, homeDir);
       } catch (e) {
         console.warn(`Could not load Cursor sessions for project ${entry.name}:`, e.message);
         project.cursorSessions = [];
       }
-      applyCustomSessionNames(project.cursorSessions, 'cursor');
+      applyCustomSessionNames(project.cursorSessions, 'cursor', userId);
 
       // Also fetch Codex sessions for this project
       try {
         project.codexSessions = await getCodexSessions(actualProjectDir, {
           indexRef: codexSessionsIndexRef,
+          homeDir,
         });
       } catch (e) {
         console.warn(`Could not load Codex sessions for project ${entry.name}:`, e.message);
         project.codexSessions = [];
       }
-      applyCustomSessionNames(project.codexSessions, 'codex');
+      applyCustomSessionNames(project.codexSessions, 'codex', userId);
 
       // Also fetch Gemini sessions for this project (UI + CLI)
       try {
@@ -492,7 +494,7 @@ async function getProjects(progressCallback = null) {
         console.warn(`Could not load Gemini sessions for project ${entry.name}:`, e.message);
         project.geminiSessions = [];
       }
-      applyCustomSessionNames(project.geminiSessions, 'gemini');
+      applyCustomSessionNames(project.geminiSessions, 'gemini', userId);
 
       // Add TaskMaster detection
       try {
@@ -576,17 +578,18 @@ async function getProjects(progressCallback = null) {
       } catch (e) {
         console.warn(`Could not load Cursor sessions for manual project ${projectName}:`, e.message);
       }
-      applyCustomSessionNames(project.cursorSessions, 'cursor');
+      applyCustomSessionNames(project.cursorSessions, 'cursor', userId);
 
       // Try to fetch Codex sessions for manual projects too
       try {
         project.codexSessions = await getCodexSessions(actualProjectDir, {
           indexRef: codexSessionsIndexRef,
+          homeDir,
         });
       } catch (e) {
         console.warn(`Could not load Codex sessions for manual project ${projectName}:`, e.message);
       }
-      applyCustomSessionNames(project.codexSessions, 'codex');
+      applyCustomSessionNames(project.codexSessions, 'codex', userId);
 
       // Try to fetch Gemini sessions for manual projects too (UI + CLI)
       try {
@@ -597,7 +600,7 @@ async function getProjects(progressCallback = null) {
       } catch (e) {
         console.warn(`Could not load Gemini sessions for manual project ${projectName}:`, e.message);
       }
-      applyCustomSessionNames(project.geminiSessions, 'gemini');
+      applyCustomSessionNames(project.geminiSessions, 'gemini', userId);
 
       // Add TaskMaster detection for manual projects
       try {

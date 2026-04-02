@@ -148,6 +148,39 @@ const runMigrations = () => {
     )`);
     db.exec('CREATE INDEX IF NOT EXISTS idx_session_names_lookup ON session_names(session_id, provider)');
 
+    // Multi-user support migrations
+    if (!columnNames.includes('role')) {
+      console.log('Running migration: Adding role column to users');
+      db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'");
+      // Promote the first registered user to admin
+      const firstUser = db.prepare('SELECT id FROM users ORDER BY id ASC LIMIT 1').get();
+      if (firstUser) {
+        db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(firstUser.id);
+        console.log(`  → User #${firstUser.id} promoted to admin`);
+      }
+    }
+
+    if (!columnNames.includes('data_dir')) {
+      console.log('Running migration: Adding data_dir column to users');
+      db.exec('ALTER TABLE users ADD COLUMN data_dir TEXT');
+    }
+
+    // Add user_id to session_names for per-user session naming
+    const sessionNamesInfo = db.prepare("PRAGMA table_info(session_names)").all();
+    const sessionNamesCols = sessionNamesInfo.map(col => col.name);
+    if (!sessionNamesCols.includes('user_id')) {
+      console.log('Running migration: Adding user_id column to session_names');
+      db.exec('ALTER TABLE session_names ADD COLUMN user_id INTEGER REFERENCES users(id)');
+      // Backfill existing rows to the first (admin) user
+      const firstUser = db.prepare('SELECT id FROM users ORDER BY id ASC LIMIT 1').get();
+      if (firstUser) {
+        db.prepare('UPDATE session_names SET user_id = ? WHERE user_id IS NULL').run(firstUser.id);
+      }
+      // Recreate unique index to include user_id
+      db.exec('DROP INDEX IF EXISTS idx_session_names_lookup');
+      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_session_names_user_lookup ON session_names(session_id, provider, user_id)');
+    }
+
     console.log('Database migrations completed successfully');
   } catch (error) {
     console.error('Error running migrations:', error.message);
@@ -210,10 +243,10 @@ const userDb = {
     }
   },
 
-  // Get user by ID
+  // Get user by ID (includes role and multi-user fields)
   getUserById: (userId) => {
     try {
-      const row = db.prepare('SELECT id, username, created_at, last_login FROM users WHERE id = ? AND is_active = 1').get(userId);
+      const row = db.prepare('SELECT id, username, role, data_dir, git_name, git_email, created_at, last_login, is_active FROM users WHERE id = ? AND is_active = 1').get(userId);
       return row;
     } catch (err) {
       throw err;
@@ -222,8 +255,95 @@ const userDb = {
 
   getFirstUser: () => {
     try {
-      const row = db.prepare('SELECT id, username, created_at, last_login FROM users WHERE is_active = 1 LIMIT 1').get();
+      const row = db.prepare('SELECT id, username, role, data_dir, git_name, git_email, created_at, last_login FROM users WHERE is_active = 1 LIMIT 1').get();
       return row;
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  // Multi-user management methods
+  getAllUsers: () => {
+    try {
+      return db.prepare('SELECT id, username, role, data_dir, git_name, git_email, created_at, last_login, is_active FROM users ORDER BY id ASC').all();
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  createUserByAdmin: (username, passwordHash, role, gitName, gitEmail, dataDir) => {
+    try {
+      const stmt = db.prepare('INSERT INTO users (username, password_hash, role, git_name, git_email, data_dir, has_completed_onboarding) VALUES (?, ?, ?, ?, ?, ?, 1)');
+      const result = stmt.run(username, passwordHash, role || 'user', gitName || null, gitEmail || null, dataDir || null);
+      return { id: result.lastInsertRowid, username, role: role || 'user' };
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  setUserRole: (userId, role) => {
+    try {
+      if (role !== 'admin' && role !== 'user') throw new Error('Invalid role');
+      // Prevent removing the last admin
+      if (role === 'user') {
+        const adminCount = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin' AND is_active = 1").get();
+        const currentUser = db.prepare('SELECT role FROM users WHERE id = ?').get(userId);
+        if (currentUser?.role === 'admin' && adminCount.count <= 1) {
+          throw new Error('Cannot remove the last admin');
+        }
+      }
+      db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, userId);
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  deactivateUser: (userId) => {
+    try {
+      // Prevent deactivating the last admin
+      const user = db.prepare('SELECT role FROM users WHERE id = ?').get(userId);
+      if (user?.role === 'admin') {
+        const adminCount = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin' AND is_active = 1").get();
+        if (adminCount.count <= 1) throw new Error('Cannot deactivate the last admin');
+      }
+      db.prepare('UPDATE users SET is_active = 0 WHERE id = ?').run(userId);
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  reactivateUser: (userId) => {
+    try {
+      db.prepare('UPDATE users SET is_active = 1 WHERE id = ?').run(userId);
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  deleteUser: (userId) => {
+    try {
+      const user = db.prepare('SELECT role FROM users WHERE id = ?').get(userId);
+      if (user?.role === 'admin') {
+        const adminCount = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin' AND is_active = 1").get();
+        if (adminCount.count <= 1) throw new Error('Cannot delete the last admin');
+      }
+      db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  updateUserDataDir: (userId, dataDir) => {
+    try {
+      db.prepare('UPDATE users SET data_dir = ? WHERE id = ?').run(dataDir, userId);
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  updateUserPassword: (userId, passwordHash) => {
+    try {
+      db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, userId);
     } catch (err) {
       throw err;
     }
@@ -515,51 +635,51 @@ const pushSubscriptionsDb = {
   }
 };
 
-// Session custom names database operations
+// Session custom names database operations (user-scoped)
 const sessionNamesDb = {
-  // Set (insert or update) a custom session name
-  setName: (sessionId, provider, customName) => {
+  // Set (insert or update) a custom session name for a specific user
+  setName: (sessionId, provider, customName, userId) => {
     db.prepare(`
-      INSERT INTO session_names (session_id, provider, custom_name)
-      VALUES (?, ?, ?)
-      ON CONFLICT(session_id, provider)
+      INSERT INTO session_names (session_id, provider, custom_name, user_id)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(session_id, provider, user_id)
       DO UPDATE SET custom_name = excluded.custom_name, updated_at = CURRENT_TIMESTAMP
-    `).run(sessionId, provider, customName);
+    `).run(sessionId, provider, customName, userId);
   },
 
-  // Get a single custom session name
-  getName: (sessionId, provider) => {
+  // Get a single custom session name for a specific user
+  getName: (sessionId, provider, userId) => {
     const row = db.prepare(
-      'SELECT custom_name FROM session_names WHERE session_id = ? AND provider = ?'
-    ).get(sessionId, provider);
+      'SELECT custom_name FROM session_names WHERE session_id = ? AND provider = ? AND user_id = ?'
+    ).get(sessionId, provider, userId);
     return row?.custom_name || null;
   },
 
-  // Batch lookup — returns Map<sessionId, customName>
-  getNames: (sessionIds, provider) => {
+  // Batch lookup — returns Map<sessionId, customName> for a specific user
+  getNames: (sessionIds, provider, userId) => {
     if (!sessionIds.length) return new Map();
     const placeholders = sessionIds.map(() => '?').join(',');
     const rows = db.prepare(
       `SELECT session_id, custom_name FROM session_names
-       WHERE session_id IN (${placeholders}) AND provider = ?`
-    ).all(...sessionIds, provider);
+       WHERE session_id IN (${placeholders}) AND provider = ? AND user_id = ?`
+    ).all(...sessionIds, provider, userId);
     return new Map(rows.map(r => [r.session_id, r.custom_name]));
   },
 
-  // Delete a custom session name
-  deleteName: (sessionId, provider) => {
+  // Delete a custom session name for a specific user
+  deleteName: (sessionId, provider, userId) => {
     return db.prepare(
-      'DELETE FROM session_names WHERE session_id = ? AND provider = ?'
-    ).run(sessionId, provider).changes > 0;
+      'DELETE FROM session_names WHERE session_id = ? AND provider = ? AND user_id = ?'
+    ).run(sessionId, provider, userId).changes > 0;
   },
 };
 
 // Apply custom session names from the database (overrides CLI-generated summaries)
-function applyCustomSessionNames(sessions, provider) {
-  if (!sessions?.length) return;
+function applyCustomSessionNames(sessions, provider, userId) {
+  if (!sessions?.length || !userId) return;
   try {
     const ids = sessions.map(s => s.id);
-    const customNames = sessionNamesDb.getNames(ids, provider);
+    const customNames = sessionNamesDb.getNames(ids, provider, userId);
     for (const session of sessions) {
       const custom = customNames.get(session.id);
       if (custom) session.summary = custom;

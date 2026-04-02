@@ -1,4 +1,5 @@
-import { Bell, Bot, GitBranch, Key, ListChecks, Palette, Puzzle } from 'lucide-react';
+import { Bell, Bot, GitBranch, Key, ListChecks, Palette, Puzzle, Users } from 'lucide-react';
+import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../../lib/utils';
 import { PillBar, Pill } from '../../../shared/view/ui';
@@ -7,6 +8,7 @@ import type { SettingsMainTab } from '../types/types';
 type SettingsSidebarProps = {
   activeTab: SettingsMainTab;
   onChange: (tab: SettingsMainTab) => void;
+  isAdmin?: boolean;
 };
 
 type NavItem = {
@@ -15,7 +17,7 @@ type NavItem = {
   icon: typeof Bot;
 };
 
-const NAV_ITEMS: NavItem[] = [
+const BASE_NAV_ITEMS: NavItem[] = [
   { id: 'agents', labelKey: 'mainTabs.agents', icon: Bot },
   { id: 'appearance', labelKey: 'mainTabs.appearance', icon: Palette },
   { id: 'git', labelKey: 'mainTabs.git', icon: GitBranch },
@@ -25,7 +27,13 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'notifications', labelKey: 'mainTabs.notifications', icon: Bell },
 ];
 
-export default function SettingsSidebar({ activeTab, onChange }: SettingsSidebarProps) {
+const ADMIN_NAV_ITEM: NavItem = { id: 'admin', labelKey: 'mainTabs.admin', icon: Users };
+
+export default function SettingsSidebar({ activeTab, onChange, isAdmin = false }: SettingsSidebarProps) {
+  const NAV_ITEMS = useMemo(
+    () => isAdmin ? [...BASE_NAV_ITEMS, ADMIN_NAV_ITEM] : BASE_NAV_ITEMS,
+    [isAdmin],
+  );
   const { t } = useTranslation('settings');
 
   return (

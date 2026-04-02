@@ -8,7 +8,8 @@ const router = express.Router();
 
 router.get('/claude/status', async (req, res) => {
   try {
-    const credentialsResult = await checkClaudeCredentials();
+    const userHomeDir = req.user?.data_dir || os.homedir();
+    const credentialsResult = await checkClaudeCredentials(userHomeDir);
 
     if (credentialsResult.authenticated) {
       return res.json({
@@ -96,9 +97,9 @@ router.get('/gemini/status', async (req, res) => {
   }
 });
 
-async function loadClaudeSettingsEnv() {
+async function loadClaudeSettingsEnv(homeDir = null) {
   try {
-    const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+    const settingsPath = path.join(homeDir || os.homedir(), '.claude', 'settings.json');
     const content = await fs.readFile(settingsPath, 'utf8');
     const settings = JSON.parse(content);
 
@@ -133,10 +134,10 @@ async function loadClaudeSettingsEnv() {
  *   - email: user email or auth method identifier
  *   - method: 'api_key' for env var, 'credentials_file' for OAuth tokens
  */
-async function checkClaudeCredentials() {
+async function checkClaudeCredentials(homeDir = null) {
+  const effectiveHome = homeDir || os.homedir();
+
   // Priority 1: Check for ANTHROPIC_API_KEY environment variable
-  // The SDK checks this first and uses it if present, even if OAuth tokens exist.
-  // When set, API calls are charged via pay-as-you-go rates instead of subscription.
   if (process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.trim()) {
     return {
       authenticated: true,
@@ -145,10 +146,8 @@ async function checkClaudeCredentials() {
     };
   }
 
-  // Priority 1b: Check ~/.claude/settings.json env values.
-  // Claude Code can read proxy/auth values from settings.json even when the
-  // CloudCLI server process itself was not started with those env vars exported.
-  const settingsEnv = await loadClaudeSettingsEnv();
+  // Priority 1b: Check user-specific settings.json env values.
+  const settingsEnv = await loadClaudeSettingsEnv(effectiveHome);
 
   if (typeof settingsEnv.ANTHROPIC_API_KEY === 'string' && settingsEnv.ANTHROPIC_API_KEY.trim()) {
     return {
@@ -170,7 +169,7 @@ async function checkClaudeCredentials() {
   // This is the standard authentication method used by Claude CLI after running
   // 'claude /login' or 'claude setup-token' commands.
   try {
-    const credPath = path.join(os.homedir(), '.claude', '.credentials.json');
+    const credPath = path.join(effectiveHome, '.claude', '.credentials.json');
     const content = await fs.readFile(credPath, 'utf8');
     const creds = JSON.parse(content);
 

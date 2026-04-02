@@ -88,14 +88,22 @@ const generateToken = (user) => {
   );
 };
 
-// WebSocket authentication function
+// Require admin role middleware (use after authenticateToken)
+const requireAdmin = (req, res, next) => {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  next();
+};
+
+// WebSocket authentication function — returns full user object including role/data_dir
 const authenticateWebSocket = (token) => {
   // Platform mode: bypass token validation, return first user
   if (IS_PLATFORM) {
     try {
       const user = userDb.getFirstUser();
       if (user) {
-        return { id: user.id, userId: user.id, username: user.username };
+        return { id: user.id, userId: user.id, username: user.username, role: user.role, data_dir: user.data_dir, git_name: user.git_name, git_email: user.git_email };
       }
       return null;
     } catch (error) {
@@ -116,7 +124,7 @@ const authenticateWebSocket = (token) => {
     if (!user) {
       return null;
     }
-    return { userId: user.id, username: user.username };
+    return { id: user.id, userId: user.id, username: user.username, role: user.role, data_dir: user.data_dir, git_name: user.git_name, git_email: user.git_email };
   } catch (error) {
     console.error('WebSocket token verification error:', error);
     return null;
@@ -126,6 +134,7 @@ const authenticateWebSocket = (token) => {
 export {
   validateApiKey,
   authenticateToken,
+  requireAdmin,
   generateToken,
   authenticateWebSocket,
   JWT_SECRET

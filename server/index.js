@@ -52,6 +52,8 @@ import { spawnGemini, abortGeminiSession, isGeminiSessionActive, getActiveGemini
 import sessionManager from './sessionManager.js';
 import gitRoutes from './routes/git.js';
 import authRoutes from './routes/auth.js';
+import adminRoutes from './routes/admin.js';
+import userEnvManager from './services/user-env-manager.js';
 import mcpRoutes from './routes/mcp.js';
 import cursorRoutes from './routes/cursor.js';
 import taskmasterRoutes from './routes/taskmaster.js';
@@ -358,6 +360,7 @@ app.use('/api', validateApiKey);
 
 // Authentication routes (public)
 app.use('/api/auth', authRoutes);
+app.use('/api/admin/users', adminRoutes);
 
 // Projects API Routes (protected)
 app.use('/api/projects', authenticateToken, projectsRoutes);
@@ -496,7 +499,10 @@ app.post('/api/system/update', authenticateToken, async (req, res) => {
 
 app.get('/api/projects', authenticateToken, async (req, res) => {
     try {
-        const projects = await getProjects(broadcastProgress);
+        const projects = await getProjects(broadcastProgress, {
+            userDataDir: req.user?.data_dir || null,
+            userId: req.user?.id || null,
+        });
         res.json(projects);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -507,7 +513,7 @@ app.get('/api/projects/:projectName/sessions', authenticateToken, async (req, re
     try {
         const { limit = 5, offset = 0 } = req.query;
         const result = await getSessions(req.params.projectName, parseInt(limit), parseInt(offset));
-        applyCustomSessionNames(result.sessions, 'claude');
+        applyCustomSessionNames(result.sessions, 'claude', req.user.id);
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -531,7 +537,7 @@ app.delete('/api/projects/:projectName/sessions/:sessionId', authenticateToken, 
         const { projectName, sessionId } = req.params;
         console.log(`[API] Deleting session: ${sessionId} from project: ${projectName}`);
         await deleteSession(projectName, sessionId);
-        sessionNamesDb.deleteName(sessionId, 'claude');
+        sessionNamesDb.deleteName(sessionId, 'claude', req.user.id);
         console.log(`[API] Session ${sessionId} deleted successfully`);
         res.json({ success: true });
     } catch (error) {
@@ -558,7 +564,7 @@ app.put('/api/sessions/:sessionId/rename', authenticateToken, async (req, res) =
         if (!provider || !VALID_PROVIDERS.includes(provider)) {
             return res.status(400).json({ error: `Provider must be one of: ${VALID_PROVIDERS.join(', ')}` });
         }
-        sessionNamesDb.setName(safeSessionId, provider, summary.trim());
+        sessionNamesDb.setName(safeSessionId, provider, summary.trim(), req.user.id);
         res.json({ success: true });
     } catch (error) {
         console.error(`[API] Error renaming session ${req.params.sessionId}:`, error);
@@ -1429,7 +1435,7 @@ wss.on('connection', (ws, request) => {
     const pathname = urlObj.pathname;
 
     if (pathname === '/shell') {
-        handleShellConnection(ws);
+        handleShellConnection(ws, request);
     } else if (pathname === '/ws') {
         handleChatConnection(ws, request);
     } else if (pathname.startsWith('/plugin-ws/')) {
@@ -1623,8 +1629,9 @@ function handleChatConnection(ws, request) {
 }
 
 // Handle shell WebSocket connections
-function handleShellConnection(ws) {
-    console.log('🐚 Shell client connected');
+function handleShellConnection(ws, request) {
+    const wsUser = request?.user;
+    console.log('🐚 Shell client connected', wsUser ? `(user: ${wsUser.username})` : '');
     let shellProcess = null;
     let ptySessionKey = null;
     let urlDetectionBuffer = '';
@@ -1813,17 +1820,17 @@ function handleShellConnection(ws) {
                     const termRows = data.rows || 24;
                     console.log('📐 Using terminal dimensions:', termCols, 'x', termRows);
 
+                    // Build user-specific environment variables for isolation
+                    const spawnEnv = wsUser
+                        ? userEnvManager.buildUserEnv(wsUser)
+                        : { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', FORCE_COLOR: '3' };
+
                     shellProcess = pty.spawn(shell, shellArgs, {
                         name: 'xterm-256color',
                         cols: termCols,
                         rows: termRows,
                         cwd: resolvedProjectPath,
-                        env: {
-                            ...process.env,
-                            TERM: 'xterm-256color',
-                            COLORTERM: 'truecolor',
-                            FORCE_COLOR: '3'
-                        }
+                        env: spawnEnv
                     });
 
                     console.log('🟢 Shell process started with PTY, PID:', shellProcess.pid);

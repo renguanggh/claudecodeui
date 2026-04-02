@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 export type AuthUser = {
   id?: number | string;
   username: string;
+  role?: 'admin' | 'user';
   [key: string]: unknown;
 };
 
@@ -38,6 +39,7 @@ export type AuthContextValue = {
   isLoading: boolean;
   needsSetup: boolean;
   hasCompletedOnboarding: boolean;
+  isAdmin: boolean;
   error: string | null;
   login: (username: string, password: string) => Promise<AuthActionResult>;
   register: (username: string, password: string) => Promise<AuthActionResult>;

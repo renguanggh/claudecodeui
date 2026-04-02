@@ -60,7 +60,7 @@ router.get('/sessions', async (req, res) => {
     }
 
     const sessions = await getCodexSessions(projectPath);
-    applyCustomSessionNames(sessions, 'codex');
+    applyCustomSessionNames(sessions, 'codex', req.user?.id);
     res.json({ success: true, sessions });
   } catch (error) {
     console.error('Error fetching Codex sessions:', error);
@@ -72,7 +72,7 @@ router.delete('/sessions/:sessionId', async (req, res) => {
   try {
     const { sessionId } = req.params;
     await deleteCodexSession(sessionId);
-    sessionNamesDb.deleteName(sessionId, 'codex');
+    sessionNamesDb.deleteName(sessionId, 'codex', req.user?.id);
     res.json({ success: true });
   } catch (error) {
     console.error(`Error deleting Codex session ${req.params.sessionId}:`, error);

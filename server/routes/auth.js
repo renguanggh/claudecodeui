@@ -2,6 +2,7 @@ import express from 'express';
 import bcrypt from 'bcrypt';
 import { userDb, db } from '../database/db.js';
 import { generateToken, authenticateToken } from '../middleware/auth.js';
+import userEnvManager from '../services/user-env-manager.js';
 
 const router = express.Router();
 
@@ -36,23 +37,30 @@ router.post('/register', async (req, res) => {
     // Use a transaction to prevent race conditions
     db.prepare('BEGIN').run();
     try {
-      // Check if users already exist (only allow one user)
+      // Check if users already exist (first user = admin setup only)
       const hasUsers = userDb.hasUsers();
       if (hasUsers) {
         db.prepare('ROLLBACK').run();
-        return res.status(403).json({ error: 'User already exists. This is a single-user system.' });
+        return res.status(403).json({ error: 'Setup already completed. New users must be created by an admin.' });
       }
-      
+
       // Hash password
       const saltRounds = 12;
       const passwordHash = await bcrypt.hash(password, saltRounds);
-      
-      // Create user
+
+      // Create the first user as admin
       const user = userDb.createUser(username, passwordHash);
-      
+      // Promote to admin
+      db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(user.id);
+      user.role = 'admin';
+
+      // Initialize user data directory
+      const dataDir = userEnvManager.initUserDataDir(user.id);
+      userDb.updateUserDataDir(user.id, dataDir);
+
       // Generate token
       const token = generateToken(user);
-      
+
       db.prepare('COMMIT').run();
 
       // Update last login (non-fatal, outside transaction)
@@ -60,7 +68,7 @@ router.post('/register', async (req, res) => {
 
       res.json({
         success: true,
-        user: { id: user.id, username: user.username },
+        user: { id: user.id, username: user.username, role: user.role },
         token
       });
     } catch (error) {
@@ -88,27 +96,27 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Username and password are required' });
     }
     
-    // Get user from database
+    // Get user from database (getUserByUsername already filters is_active = 1)
     const user = userDb.getUserByUsername(username);
     if (!user) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
-    
+
     // Verify password
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
-    
+
     // Generate token
     const token = generateToken(user);
-    
+
     // Update last login
     userDb.updateLastLogin(user.id);
-    
+
     res.json({
       success: true,
-      user: { id: user.id, username: user.username },
+      user: { id: user.id, username: user.username, role: user.role },
       token
     });
     

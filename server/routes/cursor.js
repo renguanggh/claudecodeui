@@ -561,7 +561,7 @@ router.get('/sessions', async (req, res) => {
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
     
-    applyCustomSessionNames(sessions, 'cursor');
+    applyCustomSessionNames(sessions, 'cursor', req.user?.id);
 
     res.json({
       success: true,
