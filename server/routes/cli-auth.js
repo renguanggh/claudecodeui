@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
+import userEnvManager from '../services/user-env-manager.js';
 
 const router = express.Router();
 
@@ -39,7 +40,7 @@ router.get('/claude/status', async (req, res) => {
 
 router.get('/cursor/status', async (req, res) => {
   try {
-    const result = await checkCursorStatus();
+    const result = await checkCursorStatus(req.user || null);
 
     res.json({
       authenticated: result.authenticated,
@@ -59,7 +60,8 @@ router.get('/cursor/status', async (req, res) => {
 
 router.get('/codex/status', async (req, res) => {
   try {
-    const result = await checkCodexCredentials();
+    const userHomeDir = req.user?.data_dir || os.homedir();
+    const result = await checkCodexCredentials(userHomeDir);
 
     res.json({
       authenticated: result.authenticated,
@@ -79,7 +81,8 @@ router.get('/codex/status', async (req, res) => {
 
 router.get('/gemini/status', async (req, res) => {
   try {
-    const result = await checkGeminiCredentials();
+    const userHomeDir = req.user?.data_dir || os.homedir();
+    const result = await checkGeminiCredentials(userHomeDir);
 
     res.json({
       authenticated: result.authenticated,
@@ -200,7 +203,7 @@ async function checkClaudeCredentials(homeDir = null) {
   }
 }
 
-function checkCursorStatus() {
+function checkCursorStatus(user = null) {
   return new Promise((resolve) => {
     let processCompleted = false;
 
@@ -218,9 +221,14 @@ function checkCursorStatus() {
       }
     }, 5000);
 
+    // Use user-specific environment for multi-user isolation
+    const spawnEnv = user?.data_dir
+      ? userEnvManager.buildUserEnv(user)
+      : undefined;
+
     let childProcess;
     try {
-      childProcess = spawn('cursor-agent', ['status']);
+      childProcess = spawn('cursor-agent', ['status'], spawnEnv ? { env: spawnEnv } : undefined);
     } catch (err) {
       clearTimeout(timeout);
       processCompleted = true;
@@ -293,9 +301,9 @@ function checkCursorStatus() {
   });
 }
 
-async function checkCodexCredentials() {
+async function checkCodexCredentials(homeDir = null) {
   try {
-    const authPath = path.join(os.homedir(), '.codex', 'auth.json');
+    const authPath = path.join(homeDir || os.homedir(), '.codex', 'auth.json');
     const content = await fs.readFile(authPath, 'utf8');
     const auth = JSON.parse(content);
 
@@ -356,7 +364,7 @@ async function checkCodexCredentials() {
   }
 }
 
-async function checkGeminiCredentials() {
+async function checkGeminiCredentials(homeDir = null) {
   if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) {
     return {
       authenticated: true,
@@ -364,8 +372,9 @@ async function checkGeminiCredentials() {
     };
   }
 
+  const effectiveHome = homeDir || os.homedir();
   try {
-    const credsPath = path.join(os.homedir(), '.gemini', 'oauth_creds.json');
+    const credsPath = path.join(effectiveHome, '.gemini', 'oauth_creds.json');
     const content = await fs.readFile(credsPath, 'utf8');
     const creds = JSON.parse(content);
 
@@ -390,7 +399,7 @@ async function checkGeminiCredentials() {
         } else {
           // Token might be expired but we have a refresh token, so CLI will refresh it
           try {
-            const accPath = path.join(os.homedir(), '.gemini', 'google_accounts.json');
+            const accPath = path.join(effectiveHome, '.gemini', 'google_accounts.json');
             const accContent = await fs.readFile(accPath, 'utf8');
             const accounts = JSON.parse(accContent);
             if (accounts.active) {
@@ -401,7 +410,7 @@ async function checkGeminiCredentials() {
       } catch (e) {
         // Network error, fallback to checking local accounts file
         try {
-          const accPath = path.join(os.homedir(), '.gemini', 'google_accounts.json');
+          const accPath = path.join(effectiveHome, '.gemini', 'google_accounts.json');
           const accContent = await fs.readFile(accPath, 'utf8');
           const accounts = JSON.parse(accContent);
           if (accounts.active) {
