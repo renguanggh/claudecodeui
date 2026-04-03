@@ -1739,7 +1739,9 @@ function handleShellConnection(ws, request) {
                 const commandSuffix = isPlainShell && initialCommand
                     ? `_cmd_${Buffer.from(initialCommand).toString('base64').slice(0, 16)}`
                     : '';
-                ptySessionKey = `${projectPath}_${sessionId || 'default'}${commandSuffix}`;
+                // Include userId to prevent session sharing between users
+                const userPrefix = wsUser?.id ? `u${wsUser.id}_` : '';
+                ptySessionKey = `${userPrefix}${projectPath}_${sessionId || 'default'}${commandSuffix}`;
 
                 // Kill any existing login session before starting fresh
                 if (isLoginCommand) {
