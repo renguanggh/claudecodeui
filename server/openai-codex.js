@@ -17,6 +17,7 @@ import { Codex } from '@openai/codex-sdk';
 import { notifyRunFailed, notifyRunStopped } from './services/notification-orchestrator.js';
 import { codexAdapter } from './providers/codex/adapter.js';
 import { createNormalizedMessage } from './providers/types.js';
+import userEnvManager from './services/user-env-manager.js';
 
 // Track active sessions
 const activeCodexSessions = new Map();
@@ -211,8 +212,12 @@ export async function queryCodex(command, options = {}, ws) {
   const abortController = new AbortController();
 
   try {
-    // Initialize Codex SDK
-    codex = new Codex();
+    // Initialize Codex SDK with user-specific environment for multi-user isolation
+    const codexOpts = {};
+    if (options.user?.data_dir) {
+      codexOpts.env = userEnvManager.buildUserEnv(options.user);
+    }
+    codex = new Codex(codexOpts);
 
     // Thread options with sandbox and approval settings
     const threadOptions = {

@@ -3,6 +3,7 @@ import crossSpawn from 'cross-spawn';
 import { notifyRunFailed, notifyRunStopped } from './services/notification-orchestrator.js';
 import { cursorAdapter } from './providers/cursor/adapter.js';
 import { createNormalizedMessage } from './providers/types.js';
+import userEnvManager from './services/user-env-manager.js';
 
 // Use cross-spawn on Windows for better command execution
 const spawnFunction = process.platform === 'win32' ? crossSpawn : spawn;
@@ -122,10 +123,15 @@ async function spawnCursor(command, options = {}, ws) {
       console.log('Working directory:', workingDir);
       console.log('Session info - Input sessionId:', sessionId, 'Resume:', resume);
 
+      // Use user-specific environment for multi-user isolation
+      const spawnEnv = options.user?.data_dir
+        ? userEnvManager.buildUserEnv(options.user)
+        : { ...process.env };
+
       const cursorProcess = spawnFunction('cursor-agent', args, {
         cwd: workingDir,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env } // Inherit all environment variables
+        env: spawnEnv
       });
 
       activeCursorProcesses.set(processKey, cursorProcess);

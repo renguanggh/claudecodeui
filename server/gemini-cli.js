@@ -10,6 +10,7 @@ import sessionManager from './sessionManager.js';
 import GeminiResponseHandler from './gemini-response-handler.js';
 import { notifyRunFailed, notifyRunStopped } from './services/notification-orchestrator.js';
 import { createNormalizedMessage } from './providers/types.js';
+import userEnvManager from './services/user-env-manager.js';
 
 let activeGeminiProcesses = new Map(); // Track active processes by session ID
 
@@ -168,10 +169,15 @@ async function spawnGemini(command, options = {}, ws) {
     }
 
     return new Promise((resolve, reject) => {
+        // Use user-specific environment for multi-user isolation
+        const spawnEnv = options.user?.data_dir
+            ? userEnvManager.buildUserEnv(options.user)
+            : { ...process.env };
+
         const geminiProcess = spawnFunction(spawnCmd, spawnArgs, {
             cwd: workingDir,
             stdio: ['pipe', 'pipe', 'pipe'],
-            env: { ...process.env } // Inherit all environment variables
+            env: spawnEnv
         });
         let terminalNotificationSent = false;
         let terminalFailureReason = null;
