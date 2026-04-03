@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Eye, EyeOff, FolderOpen, FolderPlus, Loader2, Plus, X } from 'lucide-react';
+import { Eye, EyeOff, FolderOpen, FolderPlus, Loader2, Plus, X, AlertTriangle } from 'lucide-react';
 import { Button, Input } from '../../../shared/view/ui';
 import { browseFilesystemFolders, createFolderInFilesystem, fetchWorkspaceRoot } from '../data/workspaceApi';
-import { getParentPath, joinFolderPath } from '../utils/pathUtils';
+import { joinFolderPath } from '../utils/pathUtils';
 import type { FolderSuggestion } from '../types';
 
 type FolderBrowserModalProps = {
@@ -56,6 +56,16 @@ export default function FolderBrowserModal({
     });
   }, [isOpen, loadFolders]);
 
+  // Check if a path is the projects root or above it (not selectable as workspace)
+  const isAtOrAboveRoot = useCallback((pathToCheck: string): boolean => {
+    const root = workspaceRootRef.current;
+    if (!root) return false;
+    const normalized = pathToCheck.replace(/\/+$/, '');
+    const normalizedRoot = root.replace(/\/+$/, '');
+    // Path is the root itself, or root starts with path (meaning path is a parent of root)
+    return normalized === normalizedRoot || normalizedRoot.startsWith(normalized + '/');
+  }, []);
+
   const visibleFolders = useMemo(
     () =>
       folders
@@ -97,7 +107,12 @@ export default function FolderBrowserModal({
     }
   }, [currentPath, loadFolders, newFolderName]);
 
-  const parentPath = getParentPath(currentPath);
+  // Only show ".." if current path is deeper than the workspace root
+  const root = workspaceRootRef.current || '';
+  const normalizedCurrent = currentPath.replace(/\/+$/, '');
+  const normalizedRoot = root.replace(/\/+$/, '');
+  const canGoUp = normalizedRoot && normalizedCurrent !== normalizedRoot && normalizedCurrent.startsWith(normalizedRoot + '/');
+  const parentPath = canGoUp ? normalizedCurrent.substring(0, normalizedCurrent.lastIndexOf('/')) || '/' : null;
 
   if (!isOpen) {
     return null;
@@ -221,7 +236,13 @@ export default function FolderBrowserModal({
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => onFolderSelected(folder.path, autoAdvanceOnSelect)}
+                      onClick={() => {
+                        if (isAtOrAboveRoot(folder.path)) {
+                          setError('Cannot use this directory as a project folder. Please select or create a subdirectory inside your projects folder.');
+                          return;
+                        }
+                        onFolderSelected(folder.path, autoAdvanceOnSelect);
+                      }}
                       className="px-3 text-xs"
                     >
                       Select
@@ -246,7 +267,13 @@ export default function FolderBrowserModal({
             </Button>
             <Button
               variant="outline"
-              onClick={() => onFolderSelected(currentPath, autoAdvanceOnSelect)}
+              onClick={() => {
+                if (isAtOrAboveRoot(currentPath)) {
+                  setError('Cannot use this directory as a project folder. Please create a subdirectory inside your projects folder.');
+                  return;
+                }
+                onFolderSelected(currentPath, autoAdvanceOnSelect);
+              }}
             >
               Use this folder
             </Button>

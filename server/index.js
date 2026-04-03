@@ -1748,9 +1748,12 @@ function handleShellConnection(ws, request) {
                 const commandSuffix = isPlainShell && initialCommand
                     ? `_cmd_${Buffer.from(initialCommand).toString('base64').slice(0, 16)}`
                     : '';
-                // Include userId to prevent session sharing between users
+                // Include userId and provider to prevent session sharing between users/providers
                 const userPrefix = wsUser?.id ? `u${wsUser.id}_` : '';
-                ptySessionKey = `${userPrefix}${projectPath}_${sessionId || 'default'}${commandSuffix}`;
+                const providerPrefix = `${provider}_`;
+                // Use unique key for new sessions (no sessionId) to avoid reusing stale PTYs
+                const sessionKey = sessionId || `new_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                ptySessionKey = `${userPrefix}${providerPrefix}${projectPath}_${sessionKey}${commandSuffix}`;
 
                 // Kill any existing login session before starting fresh
                 if (isLoginCommand) {
